@@ -1,0 +1,6 @@
+{
+  "name": "EVA",
+  "description": "EVA — Electronic Virtual Assistant: futuristic voice-first AI assistant with device controls, context engine, tools, and provider switching.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

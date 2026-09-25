@@ -161,4 +161,48 @@ class ExampleUnitTest {
         assertTrue(entry.formattedTime.isNotBlank())
         assertTrue(entry.message.contains("Shizuku IPC"))
     }
+
+    @Test
+    fun testBubbleOverlayStateTransitions() {
+        var state = com.example.eva.overlay.BubbleOverlayUiState()
+        assertEquals(com.example.eva.overlay.BubbleMode.IDLE, state.mode)
+        assertEquals("EVA Ready", state.statusText)
+        assertFalse(state.isProcessing)
+
+        // Transition to LISTENING
+        state = state.copy(
+            mode = com.example.eva.overlay.BubbleMode.LISTENING,
+            statusText = "Listening...",
+            rmsLevel = 0.75f
+        )
+        assertEquals(com.example.eva.overlay.BubbleMode.LISTENING, state.mode)
+        assertEquals("Listening...", state.statusText)
+        assertEquals(0.75f, state.rmsLevel, 0.001f)
+
+        // User speaks
+        state = state.copy(
+            recognizedText = "Open AdGuard"
+        )
+        assertEquals("Open AdGuard", state.recognizedText)
+
+        // Processing & SPEAKING
+        state = state.copy(
+            mode = com.example.eva.overlay.BubbleMode.SPEAKING,
+            statusText = "Speaking...",
+            spokenText = "Opened AdGuard. I am waiting for your next commands."
+        )
+        assertEquals(com.example.eva.overlay.BubbleMode.SPEAKING, state.mode)
+        assertEquals("Speaking...", state.statusText)
+        assertTrue(state.spokenText.contains("AdGuard"))
+
+        // Returns to IDLE - overlay stays active!
+        state = state.copy(
+            mode = com.example.eva.overlay.BubbleMode.IDLE,
+            statusText = "EVA Ready",
+            recognizedText = "",
+            spokenText = ""
+        )
+        assertEquals(com.example.eva.overlay.BubbleMode.IDLE, state.mode)
+        assertEquals("EVA Ready", state.statusText)
+    }
 }

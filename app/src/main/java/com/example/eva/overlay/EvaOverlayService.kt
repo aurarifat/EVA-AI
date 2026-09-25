@@ -7,62 +7,82 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
+import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
-import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
+import android.util.Log
 import android.view.Gravity
-import android.view.MotionEvent
-import android.view.View
 import android.view.WindowManager
-import android.widget.FrameLayout
-import android.widget.ImageView
-import android.widget.LinearLayout
-import android.widget.TextView
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.core.app.NotificationCompat
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.lifecycle.setViewTreeViewModelStoreOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.example.MainActivity
+import com.example.R
 import com.example.eva.ai.AiRepository
 import com.example.eva.context.CommandDispatcher
 import com.example.eva.context.ContextManager
 import com.example.eva.context.MultiStepEngine
-import com.example.eva.data.database.EvaDatabase
 import com.example.eva.data.prefs.EvaPreferences
 import com.example.eva.data.prefs.SecureKeyStore
 import com.example.eva.shizuku.AdbCapabilityManager
 import com.example.eva.shizuku.DeviceScreenAutomation
 import com.example.eva.shizuku.ShizukuManager
-import com.example.eva.tools.*
+import com.example.eva.tools.AppLauncherTools
+import com.example.eva.tools.CalculatorTool
+import com.example.eva.tools.ContactTools
+import com.example.eva.tools.DeviceTools
+import com.example.eva.tools.MediaAudioTools
+import com.example.eva.tools.NetworkTools
+import com.example.eva.tools.PdfAssistant
+import com.example.eva.tools.QrTools
+import com.example.eva.tools.ToolRegistry
 import com.example.eva.voice.EvaSpeechRecognizer
 import com.example.eva.voice.EvaTextToSpeech
 import com.example.eva.voice.VoiceState
-import kotlinx.coroutines.*
-import kotlin.math.abs
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 
+/**
+ * Foreground Service hosting the Jetpack Compose Eva Bubble overlay via WindowManager.
+ * Employs OverlayLifecycleOwner to eliminate any ViewTree crashes in ComposeView.
+ * Provides explicit state management for IDLE, LISTENING, and SPEAKING modes.
+ */
 class EvaOverlayService : Service() {
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     private var windowManager: WindowManager? = null
-    private var overlayView: View? = null
+    private var composeView: ComposeView? = null
     private var windowLayoutParams: WindowManager.LayoutParams? = null
+    private var lifecycleOwner: OverlayLifecycleOwner? = null
 
+    // State management for Compose overlay
+    private val _uiState = MutableStateFlow(BubbleOverlayUiState())
+    val uiState = _uiState.asStateFlow()
+
+    // Core capabilities & tools
     private lateinit var shizukuManager: ShizukuManager
     private lateinit var screenAutomation: DeviceScreenAutomation
     private lateinit var speechRecognizer: EvaSpeechRecognizer
     private lateinit var tts: EvaTextToSpeech
     private lateinit var commandDispatcher: CommandDispatcher
 
-    private lateinit var statusText: TextView
-    private lateinit var bubbleIcon: ImageView
-    private lateinit var statusBadge: LinearLayout
-    private lateinit var quickActionsRow: LinearLayout
-
-    private var isExpanded = false
-    private var isProcessing = false
-
     companion object {
+        private const val TAG = "EvaOverlayService"
         const val ACTION_START_OVERLAY = "com.example.eva.action.START_OVERLAY"
         const val ACTION_STOP_OVERLAY = "com.example.eva.action.STOP_OVERLAY"
         private const val NOTIFICATION_CHANNEL_ID = "eva_overlay_channel"
@@ -78,10 +98,14 @@ class EvaOverlayService : Service() {
             val intent = Intent(context, EvaOverlayService::class.java).apply {
                 action = ACTION_START_OVERLAY
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error starting overlay service: ${e.message}", e)
             }
         }
 
@@ -89,7 +113,11 @@ class EvaOverlayService : Service() {
             val intent = Intent(context, EvaOverlayService::class.java).apply {
                 action = ACTION_STOP_OVERLAY
             }
-            context.stopService(intent)
+            try {
+                context.stopService(intent)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error stopping overlay service: ${e.message}", e)
+            }
         }
     }
 
@@ -97,15 +125,35 @@ class EvaOverlayService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        initDependencies()
-        createNotificationChannel()
-        startForegroundNotification()
+        try {
+            createNotificationChannel()
+            startForegroundNotification()
+            initDependencies()
 
-        if (isOverlayPermissionGranted(this)) {
-            showFloatingBubble()
-        } else {
+            if (isOverlayPermissionGranted(this)) {
+                setupComposeOverlay()
+            } else {
+                Log.w(TAG, "Overlay permission not granted. Stopping service.")
+                stopSelf()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during onCreate: ${e.message}", e)
             stopSelf()
         }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_STOP_OVERLAY -> {
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            else -> {
+                // Ensure foreground notification stays refreshed
+                startForegroundNotification()
+            }
+        }
+        return START_STICKY
     }
 
     private fun initDependencies() {
@@ -150,6 +198,29 @@ class EvaOverlayService : Service() {
 
         speechRecognizer = EvaSpeechRecognizer(app)
         tts = EvaTextToSpeech(app)
+
+        // Observe Shizuku connection state
+        serviceScope.launch {
+            shizukuManager.shizukuState.collect { info ->
+                _uiState.update { it.copy(isShizukuActive = info.isAuthorized) }
+            }
+        }
+
+        // Observe voice recognizer RMS level
+        serviceScope.launch {
+            speechRecognizer.rmsLevel.collect { rms ->
+                _uiState.update { it.copy(rmsLevel = rms) }
+            }
+        }
+
+        // Observe speech recognition partial text
+        serviceScope.launch {
+            speechRecognizer.speechText.collect { text ->
+                if (_uiState.value.mode == BubbleMode.LISTENING && text.isNotBlank()) {
+                    _uiState.update { it.copy(recognizedText = text) }
+                }
+            }
+        }
     }
 
     private fun createNotificationChannel() {
@@ -159,7 +230,8 @@ class EvaOverlayService : Service() {
                 "EVA Assistant Overlay",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Shows active floating EVA display overlay"
+                description = "Keeps the persistent EVA Display Overlay active across apps"
+                setShowBadge(false)
             }
             val nm = getSystemService(NotificationManager::class.java)
             nm?.createNotificationChannel(channel)
@@ -176,16 +248,40 @@ class EvaOverlayService : Service() {
 
         val notification: Notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setContentTitle("EVA Display Overlay Active")
-            .setContentText("Tap the floating bubble to talk with EVA")
-            .setSmallIcon(com.example.R.drawable.ic_launcher_foreground)
+            .setContentText("Persistent assistant bubble is active. Tap to interact.")
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
 
-        startForeground(NOTIFICATION_ID, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                )
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_NONE
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "startForeground with type failed, falling back: ${e.message}")
+            try {
+                startForeground(NOTIFICATION_ID, notification)
+            } catch (fallbackEx: Exception) {
+                Log.e(TAG, "Fatal startForeground error: ${fallbackEx.message}", fallbackEx)
+            }
+        }
     }
 
-    private fun showFloatingBubble() {
+    private fun setupComposeOverlay() {
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
         val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -195,7 +291,8 @@ class EvaOverlayService : Service() {
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
-        // FLAG_NOT_FOCUSABLE ensures clicks outside the bubble NEVER dismiss it and pass to underlying apps
+        // FLAG_NOT_FOCUSABLE is critical: clicks outside the bubble never vanish the overlay
+        // and pass directly through to background apps or the home launcher.
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -205,244 +302,176 @@ class EvaOverlayService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = 24
-            y = 360
+            x = 20
+            y = 350
         }
         windowLayoutParams = params
 
-        // Build elegant programmatic floating layout
-        val rootLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(8, 8, 8, 8)
-        }
+        // Initialize custom lifecycle owner for Jetpack Compose hosting
+        val owner = OverlayLifecycleOwner()
+        owner.onCreate()
+        lifecycleOwner = owner
 
-        // Main Bubble Row (Logo + Status Pill)
-        val bubbleRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(6, 6, 12, 6)
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = 100f
-                setColor(Color.parseColor("#E60D1117")) // Deep obsidian with glass translucency
-                setStroke(2, Color.parseColor("#44F6D860")) // Subtle gold border
+        val view = ComposeView(this).apply {
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindowOrReleasedFromPool)
+            setViewTreeLifecycleOwner(owner)
+            setViewTreeViewModelStoreOwner(owner)
+            setViewTreeSavedStateRegistryOwner(owner)
+
+            setContent {
+                val state by uiState.collectAsState()
+
+                EvaBubbleOverlayContent(
+                    state = state,
+                    onDragDelta = { dx, dy -> handleDrag(dx, dy) },
+                    onBubbleTap = { handleBubbleTap() },
+                    onToggleExpand = {
+                        _uiState.update { it.copy(isExpanded = !it.isExpanded) }
+                    },
+                    onQuickAction = { action -> executeAction(action) },
+                    onCloseOverlay = { stopSelf() }
+                )
             }
-            elevation = 16f
         }
+        composeView = view
 
-        // Premium White Logo Icon Container
-        val logoContainer = FrameLayout(this).apply {
-            val size = (52 * resources.displayMetrics.density).toInt()
-            layoutParams = LinearLayout.LayoutParams(size, size)
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(Color.parseColor("#161B22"))
-                setStroke(3, Color.WHITE) // Glowing premium white border
-            }
-            setPadding(6, 6, 6, 6)
-        }
-
-        bubbleIcon = ImageView(this).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-            setImageResource(com.example.R.drawable.ic_eva_white_logo)
-            scaleType = ImageView.ScaleType.FIT_CENTER
-        }
-        logoContainer.addView(bubbleIcon)
-
-        // Status Badge & Text
-        statusBadge = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(12, 2, 8, 2)
-        }
-
-        statusText = TextView(this).apply {
-            text = "EVA Ready"
-            setTextColor(Color.WHITE)
-            textSize = 12f
-            setShadowLayer(4f, 0f, 0f, Color.parseColor("#88F6D860"))
-        }
-
-        val hintText = TextView(this).apply {
-            text = "Tap to speak • Shizuku active"
-            setTextColor(Color.parseColor("#8B949E"))
-            textSize = 9.5f
-        }
-
-        statusBadge.addView(statusText)
-        statusBadge.addView(hintText)
-
-        bubbleRow.addView(logoContainer)
-        bubbleRow.addView(statusBadge)
-        rootLayout.addView(bubbleRow)
-
-        // Quick Actions Row (Expandable)
-        quickActionsRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            visibility = View.GONE
-            setPadding(8, 8, 8, 4)
-
-            // Button: Close Ads
-            val btnCloseAds = createQuickButton("Close Ads") {
-                executeDirectAction("close ads")
-            }
-            // Button: Protection ON
-            val btnProtection = createQuickButton("Protection ON") {
-                executeDirectAction("turn the protection on")
-            }
-            // Button: Close Overlay
-            val btnExit = createQuickButton("✕ Close") {
-                stopSelf()
-            }
-
-            addView(btnCloseAds)
-            addView(btnProtection)
-            addView(btnExit)
-        }
-        rootLayout.addView(quickActionsRow)
-
-        // Setup Touch Listener for Dragging & Clicking
-        setupTouchListener(rootLayout, bubbleRow)
-
-        overlayView = rootLayout
-        windowManager?.addView(overlayView, windowLayoutParams)
-    }
-
-    private fun createQuickButton(label: String, onClick: () -> Unit): TextView {
-        return TextView(this).apply {
-            text = label
-            setTextColor(Color.parseColor("#F6D860"))
-            textSize = 10f
-            setPadding(16, 8, 16, 8)
-            val lp = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                marginEnd = 8
-            }
-            layoutParams = lp
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = 30f
-                setColor(Color.parseColor("#CC1E232A"))
-                setStroke(1, Color.parseColor("#55F6D860"))
-            }
-            setOnClickListener { onClick() }
+        try {
+            windowManager?.addView(view, params)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to attach ComposeView to WindowManager: ${e.message}", e)
         }
     }
 
-    private fun setupTouchListener(root: View, bubbleRow: View) {
-        var initialX = 0
-        var initialY = 0
-        var initialTouchX = 0f
-        var initialTouchY = 0f
-        var isClick = false
+    private fun handleDrag(dx: Float, dy: Float) {
+        val params = windowLayoutParams ?: return
+        val wm = windowManager ?: return
+        val view = composeView ?: return
 
-        bubbleRow.setOnTouchListener { _, event ->
-            val lp = windowLayoutParams ?: return@setOnTouchListener false
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    initialX = lp.x
-                    initialY = lp.y
-                    initialTouchX = event.rawX
-                    initialTouchY = event.rawY
-                    isClick = true
-                    true
+        params.x = (params.x + dx.toInt()).coerceAtLeast(0)
+        params.y = (params.y + dy.toInt()).coerceAtLeast(0)
+
+        try {
+            wm.updateViewLayout(view, params)
+        } catch (e: Exception) {
+            Log.w(TAG, "Error updating overlay layout: ${e.message}")
+        }
+    }
+
+    private fun handleBubbleTap() {
+        val currentState = _uiState.value
+
+        if (currentState.isProcessing) return
+
+        when (currentState.mode) {
+            BubbleMode.IDLE -> {
+                startListeningMode()
+            }
+            BubbleMode.LISTENING -> {
+                speechRecognizer.stopListening()
+                _uiState.update {
+                    it.copy(
+                        mode = BubbleMode.IDLE,
+                        statusText = "EVA Ready",
+                        recognizedText = ""
+                    )
                 }
-                MotionEvent.ACTION_MOVE -> {
-                    val dx = (event.rawX - initialTouchX).toInt()
-                    val dy = (event.rawY - initialTouchY).toInt()
-                    if (abs(dx) > 10 || abs(dy) > 10) {
-                        isClick = false
-                    }
-                    lp.x = initialX + dx
-                    lp.y = initialY + dy
-                    windowManager?.updateViewLayout(overlayView, lp)
-                    true
+            }
+            BubbleMode.SPEAKING -> {
+                tts.stop()
+                _uiState.update {
+                    it.copy(
+                        mode = BubbleMode.IDLE,
+                        statusText = "EVA Ready"
+                    )
                 }
-                MotionEvent.ACTION_UP -> {
-                    if (isClick) {
-                        onBubbleClicked()
-                    }
-                    true
-                }
-                else -> false
             }
         }
-
-        // Long press toggles quick action chips
-        bubbleRow.setOnLongClickListener {
-            isExpanded = !isExpanded
-            quickActionsRow.visibility = if (isExpanded) View.VISIBLE else View.GONE
-            true
-        }
     }
 
-    private fun onBubbleClicked() {
-        if (isProcessing) return
-
-        if (speechRecognizer.voiceState.value == VoiceState.LISTENING) {
-            speechRecognizer.stopListening()
-            updateStatusText("Ready", "#FFFFFF")
-        } else {
-            startListeningSession()
-        }
-    }
-
-    private fun startListeningSession() {
+    private fun startListeningMode() {
         tts.stop()
-        updateStatusText("Listening...", "#00E5FF")
+        _uiState.update {
+            it.copy(
+                mode = BubbleMode.LISTENING,
+                statusText = "Listening...",
+                recognizedText = "",
+                spokenText = ""
+            )
+        }
 
-        speechRecognizer.startListening(
-            language = "en-US",
-            onResult = { spoken ->
-                processOverlayCommand(spoken)
-            },
-            onError = { err ->
-                updateStatusText("EVA Ready", "#FFFFFF")
+        try {
+            speechRecognizer.startListening(
+                language = "en-US",
+                onResult = { spoken ->
+                    processCommand(spoken)
+                },
+                onError = { err ->
+                    _uiState.update {
+                        it.copy(
+                            mode = BubbleMode.IDLE,
+                            statusText = "EVA Ready",
+                            recognizedText = ""
+                        )
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error starting speech recognizer: ${e.message}", e)
+            _uiState.update {
+                it.copy(
+                    mode = BubbleMode.IDLE,
+                    statusText = "EVA Ready"
+                )
             }
-        )
+        }
     }
 
-    private fun processOverlayCommand(rawCommand: String) {
-        if (rawCommand.isBlank()) return
-        isProcessing = true
-        updateStatusText("Thinking...", "#F6D860")
+    private fun processCommand(rawCommand: String) {
+        if (rawCommand.isBlank()) {
+            _uiState.update { it.copy(mode = BubbleMode.IDLE, statusText = "EVA Ready") }
+            return
+        }
+
+        _uiState.update {
+            it.copy(
+                mode = BubbleMode.IDLE,
+                isProcessing = true,
+                statusText = "Thinking...",
+                recognizedText = rawCommand
+            )
+        }
 
         serviceScope.launch {
             val cmd = rawCommand.trim()
             val lower = cmd.lowercase()
 
-            // 1. Dedicated Device Access & Screen Automation via Shizuku
             val responseText: String = when {
-                // "open Adguard" or "launch Adguard"
+                // "Open Adguard" or "Launch Adguard"
                 lower.contains("open adguard") || lower.contains("launch adguard") -> {
-                    updateStatusText("Opening AdGuard...", "#00E5FF")
+                    _uiState.update { it.copy(statusText = "Opening AdGuard...") }
                     val (ok, msg) = screenAutomation.launchApp("AdGuard")
-                    if (ok) "Opened AdGuard. I am waiting for your next command." else msg
+                    if (ok) "Opened AdGuard. I am waiting for your next commands." else msg
                 }
-                // "close ads", "close ad", "skip ad"
+                // "Close ads", "close ad", "skip ad"
                 lower.contains("close ad") || lower.contains("close ads") || lower.contains("skip ad") -> {
-                    updateStatusText("Closing ads...", "#FF9100")
+                    _uiState.update { it.copy(statusText = "Closing ads...") }
                     val (ok, msg) = screenAutomation.closeAds()
-                    if (ok) "Closed the ad. Waiting for your next command." else msg
+                    if (ok) "Closed the ad. Waiting for your next commands." else msg
                 }
-                // "turn the protection on", "turn on protection", "enable protection"
-                lower.contains("protection on") || lower.contains("turn on protection") || lower.contains("turn the protection on") || lower.contains("enable protection") -> {
-                    updateStatusText("Turning on protection...", "#00E676")
+                // "Turn the protection on", "turn on protection", "enable protection"
+                lower.contains("protection on") || lower.contains("turn on protection") ||
+                        lower.contains("turn the protection on") || lower.contains("enable protection") -> {
+                    _uiState.update { it.copy(statusText = "Turning protection on...") }
                     val (ok, msg) = screenAutomation.turnProtectionOn()
-                    if (ok) "Protection has been turned on. Waiting for your next command." else msg
+                    if (ok) "Protection turned on. Waiting for your next commands." else msg
                 }
-                // Click / Tap element
+                // Whole-device gestures & taps
                 lower.startsWith("click ") || lower.startsWith("tap ") -> {
                     val query = cmd.substringAfter(" ").trim()
-                    updateStatusText("Tapping '$query'...", "#00E5FF")
-                    val (ok, msg) = screenAutomation.clickByText(query)
+                    _uiState.update { it.copy(statusText = "Tapping '$query'...") }
+                    val (_, msg) = screenAutomation.clickByText(query)
                     msg
                 }
-                // Gestures: scroll / slide
                 lower.contains("scroll down") -> {
                     screenAutomation.scrollDown()
                     "Scrolled down."
@@ -460,55 +489,76 @@ class EvaOverlayService : Service() {
                     "Slid right."
                 }
                 // Close overlay
-                lower.contains("close overlay") || lower.contains("exit overlay") -> {
+                lower.contains("close overlay") || lower.contains("exit overlay") || lower.contains("hide overlay") -> {
                     stopSelf()
                     return@launch
                 }
-                // General assistant command
+                // General assistant conversational command
                 else -> {
                     val res = commandDispatcher.processCommand(cmd)
                     res.spokenResponse
                 }
             }
 
-            // Speak the response and keep the overlay active
-            updateStatusText("Speaking...", "#00E676")
-            tts.speak(responseText) {
-                // Return to Ready state and wait for next commands
-                serviceScope.launch(Dispatchers.Main) {
-                    updateStatusText("EVA Ready", "#FFFFFF")
+            // Transition to SPEAKING mode while preserving overlay visibility
+            _uiState.update {
+                it.copy(
+                    mode = BubbleMode.SPEAKING,
+                    statusText = "Speaking...",
+                    spokenText = responseText,
                     isProcessing = false
+                )
+            }
+
+            tts.speak(responseText) {
+                // When TTS completes, return to IDLE mode ready for next commands
+                serviceScope.launch(Dispatchers.Main) {
+                    _uiState.update {
+                        it.copy(
+                            mode = BubbleMode.IDLE,
+                            statusText = "EVA Ready",
+                            recognizedText = "",
+                            spokenText = ""
+                        )
+                    }
                 }
             }
 
-            // Fallback timeout in case TTS callback doesn't fire
-            delay(3500)
-            if (isProcessing) {
-                updateStatusText("EVA Ready", "#FFFFFF")
-                isProcessing = false
+            // Fallback timer if TTS utterance progress listener fails to fire
+            delay(4000)
+            if (_uiState.value.mode == BubbleMode.SPEAKING) {
+                _uiState.update {
+                    it.copy(
+                        mode = BubbleMode.IDLE,
+                        statusText = "EVA Ready",
+                        recognizedText = "",
+                        spokenText = ""
+                    )
+                }
             }
         }
     }
 
-    private fun executeDirectAction(command: String) {
-        processOverlayCommand(command)
-    }
-
-    private fun updateStatusText(text: String, colorHex: String) {
-        serviceScope.launch(Dispatchers.Main) {
-            statusText.text = text
-            statusText.setTextColor(Color.parseColor(colorHex))
-        }
+    private fun executeAction(command: String) {
+        processCommand(command)
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        serviceScope.cancel()
-        speechRecognizer.stopListening()
-        tts.shutdown()
-        overlayView?.let {
-            windowManager?.removeView(it)
-            overlayView = null
+        try {
+            serviceScope.cancel()
+            speechRecognizer.stopListening()
+            tts.shutdown()
+
+            lifecycleOwner?.onDestroy()
+            lifecycleOwner = null
+
+            composeView?.let { view ->
+                windowManager?.removeView(view)
+                composeView = null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during onDestroy: ${e.message}", e)
         }
     }
 }

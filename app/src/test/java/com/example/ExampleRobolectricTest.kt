@@ -18,4 +18,16 @@ class ExampleRobolectricTest {
     val appName = context.getString(R.string.app_name)
     assertEquals("EVA", appName)
   }
+
+  @Test
+  fun `verify OverlayLifecycleOwner lifecycle state flow`() {
+    val owner = com.example.eva.overlay.OverlayLifecycleOwner()
+    owner.onCreate()
+    assertEquals(androidx.lifecycle.Lifecycle.State.RESUMED, owner.lifecycle.currentState)
+    org.junit.Assert.assertNotNull(owner.viewModelStore)
+    org.junit.Assert.assertNotNull(owner.savedStateRegistry)
+
+    owner.onDestroy()
+    assertEquals(androidx.lifecycle.Lifecycle.State.DESTROYED, owner.lifecycle.currentState)
+  }
 }

@@ -70,6 +70,8 @@ fun EvaBubbleOverlayContent(
     state: BubbleOverlayUiState,
     onDragDelta: (dx: Float, dy: Float) -> Unit,
     onBubbleTap: () -> Unit,
+    onLogoClick: () -> Unit,
+    onOpenApp: () -> Unit,
     onToggleExpand: () -> Unit,
     onQuickAction: (String) -> Unit,
     onCloseOverlay: () -> Unit,
@@ -140,22 +142,22 @@ fun EvaBubbleOverlayContent(
                 )
             ),
             modifier = Modifier
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = onBubbleTap
-                )
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(start = 4.dp, end = 12.dp, top = 4.dp, bottom = 4.dp)
             ) {
-                // Premium White Logo Emblem Container with dynamic glow
+                // Premium White Logo Emblem Container with dynamic glow (Clicking toggles to Home Screen)
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
                         .size(48.dp)
                         .scale(pulseScale)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = onLogoClick
+                        )
                 ) {
                     // Outer Glowing Halo
                     Box(
@@ -171,7 +173,7 @@ fun EvaBubbleOverlayContent(
                             )
                     )
 
-                    // Logo Icon Frame
+                    // Logo Icon Frame - Tap toggles to home screen
                     Box(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier
@@ -191,7 +193,7 @@ fun EvaBubbleOverlayContent(
                     ) {
                         Image(
                             painter = painterResource(id = R.drawable.ic_eva_white_logo),
-                            contentDescription = "EVA Logo",
+                            contentDescription = "EVA Logo - Click to Toggle Home Screen",
                             modifier = Modifier.fillMaxSize()
                         )
                     }
@@ -199,9 +201,15 @@ fun EvaBubbleOverlayContent(
 
                 Spacer(modifier = Modifier.width(10.dp))
 
-                // Information & State Column
+                // Information & State Column - Tap starts voice listening / interaction
                 Column(
-                    modifier = Modifier.widthIn(min = 90.dp, max = 220.dp)
+                    modifier = Modifier
+                        .widthIn(min = 90.dp, max = 220.dp)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = onBubbleTap
+                        )
                 ) {
                     // Mode Tag Row
                     Row(
@@ -327,20 +335,39 @@ fun EvaBubbleOverlayContent(
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     OverlayActionButton(
+                        label = "Toggle Home",
+                        color = CyanListening,
+                        onClick = onLogoClick
+                    )
+
+                    OverlayActionButton(
+                        label = "Open App",
+                        color = GoldAccent,
+                        onClick = onOpenApp
+                    )
+
+                    OverlayActionButton(
                         label = "Close Ads",
                         color = Color(0xFFFF9100),
                         onClick = { onQuickAction("close ads") }
                     )
+                }
 
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
                     OverlayActionButton(
-                        label = "Protection ON",
+                        label = "Protect ON",
                         color = EmeraldSpeaking,
                         onClick = { onQuickAction("turn the protection on") }
                     )
 
                     OverlayActionButton(
                         label = "AdGuard",
-                        color = CyanListening,
+                        color = Color(0xFF64B5F6),
                         onClick = { onQuickAction("open adguard") }
                     )
                 }

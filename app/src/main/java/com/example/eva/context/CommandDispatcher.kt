@@ -1,6 +1,7 @@
 package com.example.eva.context
 
 import android.content.Context
+import android.content.Intent
 import com.example.eva.ai.AiRepository
 import com.example.eva.ai.ChatMessage
 import com.example.eva.data.prefs.AiProviderType
@@ -203,6 +204,23 @@ class CommandDispatcher(
                 toolName = "display_overlay",
                 toolResult = res.message,
                 isSuccess = res.isSuccess
+            )
+        }
+
+        // Toggle to home screen: "toggle home", "go home", "home screen", "toggle to home screen"
+        if (lower == "home" || lower == "go home" || lower.contains("toggle home") || lower.contains("home screen") || lower == "toggle to home") {
+            try {
+                val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                    addCategory(Intent.CATEGORY_HOME)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(homeIntent)
+            } catch (_: Exception) {}
+            return CommandResult(
+                spokenResponse = "Toggled to home screen.",
+                toolName = "toggle_home",
+                toolResult = "Toggled to home screen",
+                isSuccess = true
             )
         }
 

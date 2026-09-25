@@ -30,6 +30,7 @@ import android.content.Intent
 import android.provider.Settings
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import com.example.MainActivity
 import com.example.R
 import com.example.eva.overlay.EvaOverlayService
 import com.example.eva.shizuku.ShizukuConnectionStatus
@@ -70,6 +71,10 @@ fun HomeScreen(
     val statusBanner by viewModel.statusBanner.collectAsState()
     val context = LocalContext.current
 
+    var autoToggleHome by remember {
+        mutableStateOf(MainActivity.isAutoToggleHomeEnabled(context))
+    }
+
     val currentHour = remember { Calendar.getInstance().get(Calendar.HOUR_OF_DAY) }
     val greeting = remember(currentHour) {
         when (currentHour) {
@@ -81,6 +86,7 @@ fun HomeScreen(
     }
 
     val quickActions = listOf(
+        QuickActionItem("Toggle Home", Icons.Default.Home, "toggle to home screen"),
         QuickActionItem("Overlay", Icons.Default.PictureInPicture, "open display overlay"),
         QuickActionItem("Flashlight", Icons.Default.FlashlightOn, "turn on flashlight"),
         QuickActionItem("Status", Icons.Default.BatteryChargingFull, "how is my phone"),
@@ -570,6 +576,53 @@ fun HomeScreen(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
+                // Auto-Toggle to Home Screen Preference Switch
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = EvaSurface,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x22FFFFFF)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                            Text(
+                                text = "Auto-Toggle to Home Screen",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "When clicking the EVA app, automatically launch bubble & toggle to home screen",
+                                color = EvaTextTertiary,
+                                fontSize = 10.sp,
+                                lineHeight = 13.sp
+                            )
+                        }
+
+                        Switch(
+                            checked = autoToggleHome,
+                            onCheckedChange = { checked ->
+                                MainActivity.setAutoToggleHomeEnabled(context, checked)
+                                autoToggleHome = checked
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color(0xFF090A0E),
+                                checkedTrackColor = EvaYellowPrimary,
+                                uncheckedThumbColor = EvaTextSecondary,
+                                uncheckedTrackColor = EvaObsidian
+                            )
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -577,12 +630,8 @@ fun HomeScreen(
                     Button(
                         onClick = {
                             if (EvaOverlayService.isOverlayPermissionGranted(context)) {
-                                val homeIntent = Intent(Intent.ACTION_MAIN).apply {
-                                    addCategory(Intent.CATEGORY_HOME)
-                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                }
-                                context.startActivity(homeIntent)
                                 EvaOverlayService.startOverlay(context)
+                                MainActivity.toggleToHomeScreen(context)
                             } else {
                                 val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
                                     flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -599,13 +648,13 @@ fun HomeScreen(
                         modifier = Modifier.weight(1f)
                     ) {
                         Icon(
-                            imageVector = Icons.Default.PictureInPicture,
+                            imageVector = Icons.Default.Home,
                             contentDescription = null,
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Open Display Overlay",
+                            text = "Toggle Home Screen",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold
                         )

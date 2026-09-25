@@ -239,10 +239,14 @@ class EvaOverlayService : Service() {
     }
 
     private fun startForegroundNotification() {
+        val openAppIntent = Intent(this, MainActivity::class.java).apply {
+            putExtra(MainActivity.EXTRA_MANUAL_OPEN, true)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
         val pendingIntent = PendingIntent.getActivity(
             this,
             0,
-            Intent(this, MainActivity::class.java),
+            openAppIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
@@ -251,6 +255,11 @@ class EvaOverlayService : Service() {
             .setContentText("Persistent assistant bubble is active. Tap to interact.")
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentIntent(pendingIntent)
+            .addAction(
+                R.drawable.ic_launcher_foreground,
+                "Open EVA App",
+                pendingIntent
+            )
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
@@ -325,6 +334,8 @@ class EvaOverlayService : Service() {
                     state = state,
                     onDragDelta = { dx, dy -> handleDrag(dx, dy) },
                     onBubbleTap = { handleBubbleTap() },
+                    onLogoClick = { toggleToHomeScreen() },
+                    onOpenApp = { openFullApp() },
                     onToggleExpand = {
                         _uiState.update { it.copy(isExpanded = !it.isExpanded) }
                     },
@@ -488,6 +499,16 @@ class EvaOverlayService : Service() {
                     screenAutomation.slideRight()
                     "Slid right."
                 }
+                // Toggle Home Screen
+                lower == "home" || lower == "go home" || lower.contains("toggle home") || lower.contains("home screen") || lower == "toggle to home" -> {
+                    toggleToHomeScreen()
+                    "Switched to home screen."
+                }
+                // Open full EVA application
+                lower.contains("open app") || lower.contains("open eva") || lower.contains("open settings") -> {
+                    openFullApp()
+                    "Opened EVA app."
+                }
                 // Close overlay
                 lower.contains("close overlay") || lower.contains("exit overlay") || lower.contains("hide overlay") -> {
                     stopSelf()
@@ -536,6 +557,31 @@ class EvaOverlayService : Service() {
                     )
                 }
             }
+        }
+    }
+
+    private fun toggleToHomeScreen() {
+        try {
+            val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            startActivity(homeIntent)
+            _uiState.update { it.copy(statusText = "Home Screen", mode = BubbleMode.IDLE) }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error toggling to home screen: ${e.message}", e)
+        }
+    }
+
+    private fun openFullApp() {
+        try {
+            val appIntent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                putExtra(MainActivity.EXTRA_MANUAL_OPEN, true)
+            }
+            startActivity(appIntent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error opening full EVA app: ${e.message}", e)
         }
     }
 

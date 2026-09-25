@@ -22,7 +22,10 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
+import android.content.Context
+import android.content.Intent
 import androidx.navigation.compose.rememberNavController
+import com.example.eva.overlay.EvaOverlayService
 import com.example.eva.ui.EvaViewModel
 import com.example.eva.ui.screens.*
 import com.example.ui.theme.EvaObsidian
@@ -32,11 +35,46 @@ import com.example.ui.theme.MyApplicationTheme
 
 class MainActivity : ComponentActivity() {
 
+    companion object {
+        const val EXTRA_MANUAL_OPEN = "com.example.eva.EXTRA_MANUAL_OPEN"
+        const val PREFS_NAME = "eva_settings"
+        const val KEY_AUTO_TOGGLE_HOME = "auto_toggle_home"
+
+        fun isAutoToggleHomeEnabled(context: Context): Boolean {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            return prefs.getBoolean(KEY_AUTO_TOGGLE_HOME, true)
+        }
+
+        fun setAutoToggleHomeEnabled(context: Context, enabled: Boolean) {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.edit().putBoolean(KEY_AUTO_TOGGLE_HOME, enabled).apply()
+        }
+
+        fun toggleToHomeScreen(context: Context) {
+            val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            try {
+                context.startActivity(homeIntent)
+            } catch (_: Exception) {
+                if (context is ComponentActivity) {
+                    context.moveTaskToBack(true)
+                }
+            }
+        }
+    }
+
     private val viewModel: EvaViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // When the user clicks the app, if auto-toggle is active, automatically start the overlay and toggle to home screen
+        if (savedInstanceState == null) {
+            handleLaunchIntent(intent)
+        }
 
         setContent {
             MyApplicationTheme {
@@ -216,5 +254,21 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.refreshShizukuStatus()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleLaunchIntent(intent)
+    }
+
+    private fun handleLaunchIntent(intent: Intent?) {
+        val manualOpen = intent?.getBooleanExtra(EXTRA_MANUAL_OPEN, false) ?: false
+        val autoToggle = isAutoToggleHomeEnabled(this)
+
+        if (autoToggle && !manualOpen && EvaOverlayService.isOverlayPermissionGranted(this)) {
+            EvaOverlayService.startOverlay(this)
+            toggleToHomeScreen(this)
+        }
     }
 }

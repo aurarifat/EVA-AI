@@ -10,11 +10,14 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -31,12 +34,13 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.NotInterested
 import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -49,18 +53,23 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
+import kotlin.math.sqrt
 
-// High-end Obsidian & Gold Theme Palette
-private val BubbleObsidian = Color(0xF00D1117)
-private val BubbleSurface = Color(0xEE161B22)
+// High-end Luxury Palette
+private val BubbleObsidian = Color(0xF20B0F17)
+private val BubbleCardSurface = Color(0xF0121722)
 private val GoldAccent = Color(0xFFF6D860)
+private val GoldBorder = Color(0xFFD4AF37)
 private val CyanListening = Color(0xFF00E5FF)
 private val EmeraldSpeaking = Color(0xFF00E676)
 private val SubtextGray = Color(0xFF8B949E)
@@ -69,30 +78,30 @@ private val SubtextGray = Color(0xFF8B949E)
 fun EvaBubbleOverlayContent(
     state: BubbleOverlayUiState,
     onDragDelta: (dx: Float, dy: Float) -> Unit,
-    onBubbleTap: () -> Unit,
-    onLogoClick: () -> Unit,
-    onOpenApp: () -> Unit,
+    onBubbleClick: () -> Unit,
+    onStartVoice: () -> Unit,
     onToggleExpand: () -> Unit,
     onQuickAction: (String) -> Unit,
+    onOpenApp: () -> Unit,
     onCloseOverlay: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "bubble_animations")
 
-    // Pulse animation for breathing/listening/speaking
+    // Dynamic pulse for bubble
     val pulseScale by infiniteTransition.animateFloat(
         initialValue = 1f,
         targetValue = when (state.mode) {
-            BubbleMode.LISTENING -> 1.15f
-            BubbleMode.SPEAKING -> 1.08f
-            BubbleMode.IDLE -> 1.03f
+            BubbleMode.LISTENING -> 1.12f
+            BubbleMode.SPEAKING -> 1.07f
+            BubbleMode.IDLE -> 1.02f
         },
         animationSpec = infiniteRepeatable(
             animation = tween(
                 durationMillis = when (state.mode) {
                     BubbleMode.LISTENING -> 600
                     BubbleMode.SPEAKING -> 800
-                    BubbleMode.IDLE -> 1800
+                    BubbleMode.IDLE -> 2000
                 },
                 easing = FastOutSlowInEasing
             ),
@@ -101,16 +110,15 @@ fun EvaBubbleOverlayContent(
         label = "pulse_scale"
     )
 
-    // Glow alpha
     val glowAlpha by infiniteTransition.animateFloat(
         initialValue = 0.35f,
         targetValue = when (state.mode) {
             BubbleMode.LISTENING -> 0.95f
             BubbleMode.SPEAKING -> 0.85f
-            BubbleMode.IDLE -> 0.45f
+            BubbleMode.IDLE -> 0.50f
         },
         animationSpec = infiniteRepeatable(
-            animation = tween(1000, easing = LinearEasing),
+            animation = tween(1100, easing = LinearEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "glow_alpha"
@@ -118,294 +126,292 @@ fun EvaBubbleOverlayContent(
 
     Column(
         modifier = modifier
-            .padding(6.dp)
-            .pointerInput(Unit) {
-                detectDragGestures { change, dragAmount ->
-                    change.consume()
-                    onDragDelta(dragAmount.x, dragAmount.y)
-                }
-            }
+            .padding(4.dp)
+            .widthIn(max = 240.dp)
     ) {
-        // Main Floating Capsule (Bubble + Status Pill)
-        Surface(
-            shape = RoundedCornerShape(32.dp),
-            color = BubbleObsidian,
-            shadowElevation = 12.dp,
-            border = androidx.compose.foundation.BorderStroke(
-                width = 1.5.dp,
-                brush = Brush.horizontalGradient(
-                    colors = when (state.mode) {
-                        BubbleMode.LISTENING -> listOf(CyanListening, GoldAccent)
-                        BubbleMode.SPEAKING -> listOf(EmeraldSpeaking, CyanListening)
-                        BubbleMode.IDLE -> listOf(GoldAccent.copy(alpha = 0.7f), Color.White.copy(alpha = 0.5f))
-                    }
-                )
-            ),
-            modifier = Modifier
+        // Floating Head Row (Bubble + dynamic voice indicator pill)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(2.dp)
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(start = 4.dp, end = 12.dp, top = 4.dp, bottom = 4.dp)
+            // Main Compact Floating Circular Orb (56.dp)
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(56.dp)
+                    .scale(pulseScale)
+                    .shadow(10.dp, CircleShape)
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            var totalDragDistance = 0f
+                            var isDragging = false
+                            val dragThreshold = 14f
+
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+
+                                if (!change.pressed) {
+                                    // Finger lifted!
+                                    if (!isDragging) {
+                                        onBubbleClick()
+                                    }
+                                    break
+                                }
+
+                                val drag = change.positionChange()
+                                val dist = sqrt(drag.x * drag.x + drag.y * drag.y)
+                                totalDragDistance += dist
+
+                                if (!isDragging && totalDragDistance > dragThreshold) {
+                                    isDragging = true
+                                }
+
+                                if (isDragging) {
+                                    change.consume()
+                                    onDragDelta(drag.x, drag.y)
+                                }
+                            }
+                        }
+                    }
             ) {
-                // Premium White Logo Emblem Container with dynamic glow (Clicking toggles to Home Screen)
+                // Outer Glowing Halo
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(CircleShape)
+                        .background(
+                            when (state.mode) {
+                                BubbleMode.LISTENING -> CyanListening.copy(alpha = glowAlpha * 0.40f)
+                                BubbleMode.SPEAKING -> EmeraldSpeaking.copy(alpha = glowAlpha * 0.35f)
+                                BubbleMode.IDLE -> GoldAccent.copy(alpha = glowAlpha * 0.25f)
+                            }
+                        )
+                )
+
+                // High-End Circular Frame with Zoomed Gold Logo
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .size(48.dp)
-                        .scale(pulseScale)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            onClick = onLogoClick
+                        .size(50.dp)
+                        .clip(CircleShape)
+                        .background(BubbleObsidian)
+                        .border(
+                            width = 2.dp,
+                            brush = Brush.sweepGradient(
+                                colors = when (state.mode) {
+                                    BubbleMode.LISTENING -> listOf(CyanListening, Color.White, CyanListening)
+                                    BubbleMode.SPEAKING -> listOf(EmeraldSpeaking, CyanListening, EmeraldSpeaking)
+                                    BubbleMode.IDLE -> listOf(GoldAccent, Color.White, GoldBorder, GoldAccent)
+                                }
+                            ),
+                            shape = CircleShape
                         )
                 ) {
-                    // Outer Glowing Halo
-                    Box(
+                    Image(
+                        painter = painterResource(id = R.drawable.ic_eva_white_logo),
+                        contentDescription = "EVA Bubble - Tap to Toggle Home Screen",
+                        contentScale = ContentScale.Crop,
                         modifier = Modifier
                             .fillMaxSize()
                             .clip(CircleShape)
+                    )
+                }
+
+                // Status Badge Indicator (Bottom-Right)
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(14.dp)
+                        .align(Alignment.BottomEnd)
+                        .clip(CircleShape)
+                        .background(BubbleObsidian)
+                        .border(1.5.dp, Color.Black, CircleShape)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
                             .background(
                                 when (state.mode) {
-                                    BubbleMode.LISTENING -> CyanListening.copy(alpha = glowAlpha * 0.35f)
-                                    BubbleMode.SPEAKING -> EmeraldSpeaking.copy(alpha = glowAlpha * 0.35f)
-                                    BubbleMode.IDLE -> Color.White.copy(alpha = glowAlpha * 0.2f)
+                                    BubbleMode.LISTENING -> CyanListening
+                                    BubbleMode.SPEAKING -> EmeraldSpeaking
+                                    BubbleMode.IDLE -> GoldAccent
                                 }
                             )
                     )
-
-                    // Logo Icon Frame - Tap toggles to home screen
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .size(42.dp)
-                            .clip(CircleShape)
-                            .background(BubbleSurface)
-                            .border(
-                                width = 2.dp,
-                                color = when (state.mode) {
-                                    BubbleMode.LISTENING -> CyanListening
-                                    BubbleMode.SPEAKING -> EmeraldSpeaking
-                                    BubbleMode.IDLE -> Color.White
-                                },
-                                shape = CircleShape
-                            )
-                            .padding(6.dp)
-                    ) {
-                        Image(
-                            painter = painterResource(id = R.drawable.ic_eva_white_logo),
-                            contentDescription = "EVA Logo - Click to Toggle Home Screen",
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
                 }
+            }
 
-                Spacer(modifier = Modifier.width(10.dp))
-
-                // Information & State Column - Tap starts voice listening / interaction
-                Column(
+            // Real-Time Active Listening / Speaking Pill (appears smoothly beside bubble)
+            AnimatedVisibility(
+                visible = state.mode != BubbleMode.IDLE,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = BubbleObsidian,
+                    border = androidx.compose.foundation.BorderStroke(
+                        width = 1.dp,
+                        color = when (state.mode) {
+                            BubbleMode.LISTENING -> CyanListening.copy(alpha = 0.8f)
+                            BubbleMode.SPEAKING -> EmeraldSpeaking.copy(alpha = 0.8f)
+                            else -> GoldAccent.copy(alpha = 0.5f)
+                        }
+                    ),
                     modifier = Modifier
-                        .widthIn(min = 90.dp, max = 220.dp)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            onClick = onBubbleTap
-                        )
+                        .padding(start = 6.dp)
+                        .clickable { onBubbleClick() }
                 ) {
-                    // Mode Tag Row
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                     ) {
-                        // Animated Status Dot
-                        Box(
-                            modifier = Modifier
-                                .size(7.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    when (state.mode) {
-                                        BubbleMode.LISTENING -> CyanListening
-                                        BubbleMode.SPEAKING -> EmeraldSpeaking
-                                        BubbleMode.IDLE -> GoldAccent
-                                    }
-                                )
-                        )
-
-                        Text(
-                            text = when (state.mode) {
-                                BubbleMode.LISTENING -> "LISTENING"
-                                BubbleMode.SPEAKING -> "SPEAKING"
-                                BubbleMode.IDLE -> "EVA READY"
-                            },
-                            color = when (state.mode) {
-                                BubbleMode.LISTENING -> CyanListening
-                                BubbleMode.SPEAKING -> EmeraldSpeaking
-                                BubbleMode.IDLE -> GoldAccent
-                            },
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 0.5.sp
-                        )
-
-                        if (state.mode == BubbleMode.SPEAKING) {
-                            SpeakingEqualizerBars()
-                        } else if (state.mode == BubbleMode.LISTENING) {
+                        if (state.mode == BubbleMode.LISTENING) {
                             Icon(
                                 imageVector = Icons.Default.Mic,
                                 contentDescription = "Listening",
                                 tint = CyanListening,
-                                modifier = Modifier.size(11.dp)
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (state.recognizedText.isNotBlank()) "\"${state.recognizedText}\"" else "Listening...",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        } else if (state.mode == BubbleMode.SPEAKING) {
+                            SpeakingEqualizerBars()
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (state.spokenText.isNotBlank()) state.spokenText else "Speaking...",
+                                color = EmeraldSpeaking,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
-
-                    // Main Status Text
-                    Text(
-                        text = if (state.mode == BubbleMode.LISTENING && state.recognizedText.isNotBlank()) {
-                            "\"${state.recognizedText}\""
-                        } else {
-                            state.statusText
-                        },
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-
-                    // Secondary Subtext
-                    Text(
-                        text = when (state.mode) {
-                            BubbleMode.IDLE -> "Tap to speak • Hold for actions"
-                            BubbleMode.LISTENING -> "Listening to your voice..."
-                            BubbleMode.SPEAKING -> "Executing & speaking..."
-                        },
-                        color = SubtextGray,
-                        fontSize = 9.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(6.dp))
-
-                // Expand/Actions Toggle Button
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(24.dp)
-                        .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.1f))
-                        .clickable { onToggleExpand() }
-                ) {
-                    Text(
-                        text = if (state.isExpanded) "▲" else "▼",
-                        color = GoldAccent,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold
-                    )
                 }
             }
         }
 
-        // Expandable Quick Action Chips Row
+        // Expandable Quick Action Mini-Dock
         AnimatedVisibility(
             visible = state.isExpanded,
-            enter = fadeIn(),
-            exit = fadeOut()
+            enter = fadeIn() + slideInVertically(),
+            exit = fadeOut() + slideOutVertically()
         ) {
-            Column(
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = BubbleCardSurface,
+                shadowElevation = 8.dp,
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    Brush.verticalGradient(listOf(GoldAccent.copy(alpha = 0.5f), Color.Transparent))
+                ),
                 modifier = Modifier
                     .padding(top = 6.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(BubbleObsidian)
-                    .border(1.dp, GoldAccent.copy(alpha = 0.4f), RoundedCornerShape(16.dp))
-                    .padding(8.dp)
-                    .widthIn(max = 280.dp)
+                    .widthIn(max = 210.dp)
             ) {
-                Text(
-                    text = "QUICK SHIZUKU ACTIONS",
-                    color = GoldAccent,
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(bottom = 6.dp, start = 2.dp)
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                Column(
+                    modifier = Modifier.padding(8.dp)
                 ) {
-                    OverlayActionButton(
-                        label = "Toggle Home",
-                        color = CyanListening,
-                        onClick = onLogoClick
-                    )
-
-                    OverlayActionButton(
-                        label = "Open App",
-                        color = GoldAccent,
-                        onClick = onOpenApp
-                    )
-
-                    OverlayActionButton(
-                        label = "Close Ads",
-                        color = Color(0xFFFF9100),
-                        onClick = { onQuickAction("close ads") }
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(6.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    OverlayActionButton(
-                        label = "Protect ON",
-                        color = EmeraldSpeaking,
-                        onClick = { onQuickAction("turn the protection on") }
-                    )
-
-                    OverlayActionButton(
-                        label = "AdGuard",
-                        color = Color(0xFF64B5F6),
-                        onClick = { onQuickAction("open adguard") }
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(6.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = if (state.isShizukuActive) "✓ Shizuku shell ready" else "• Shizuku background",
-                        color = if (state.isShizukuActive) EmeraldSpeaking else SubtextGray,
-                        fontSize = 9.sp
-                    )
-
-                    // Close overlay button
+                    // Header with mini label
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color.Red.copy(alpha = 0.2f))
-                            .clickable { onCloseOverlay() }
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Close",
-                            tint = Color(0xFFFF5252),
-                            modifier = Modifier.size(11.dp)
-                        )
-                        Spacer(modifier = Modifier.width(3.dp))
                         Text(
-                            text = "Exit",
+                            text = "EVA QUICK DOCK",
+                            color = GoldAccent,
+                            fontSize = 8.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.5.sp
+                        )
+
+                        Text(
+                            text = if (state.isShizukuActive) "✓ Shell Ready" else "• Shizuku Active",
+                            color = if (state.isShizukuActive) EmeraldSpeaking else SubtextGray,
+                            fontSize = 8.sp
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // Primary Action Grid (Compact 2-columns)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        CompactDockButton(
+                            icon = Icons.Default.Mic,
+                            label = "Voice",
+                            color = CyanListening,
+                            onClick = onStartVoice,
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        CompactDockButton(
+                            icon = Icons.Default.Home,
+                            label = "Home",
+                            color = GoldAccent,
+                            onClick = onBubbleClick,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        CompactDockButton(
+                            icon = Icons.Default.NotInterested,
+                            label = "Close Ads",
+                            color = Color(0xFFFF9100),
+                            onClick = { onQuickAction("close ads") },
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        CompactDockButton(
+                            icon = Icons.Default.Shield,
+                            label = "Protect ON",
+                            color = EmeraldSpeaking,
+                            onClick = { onQuickAction("turn the protection on") },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    // Bottom Row: Open App & Dismiss
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        CompactDockButton(
+                            icon = Icons.Default.Apps,
+                            label = "Open App",
+                            color = Color.White,
+                            onClick = onOpenApp,
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        CompactDockButton(
+                            icon = Icons.Default.Close,
+                            label = "Exit",
                             color = Color(0xFFFF5252),
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold
+                            onClick = onCloseOverlay,
+                            modifier = Modifier.weight(1f)
                         )
                     }
                 }
@@ -415,24 +421,40 @@ fun EvaBubbleOverlayContent(
 }
 
 @Composable
-private fun OverlayActionButton(
+private fun CompactDockButton(
+    icon: ImageVector,
     label: String,
     color: Color,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = color.copy(alpha = 0.15f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = 0.6f)),
-        modifier = Modifier.clickable { onClick() }
+        shape = RoundedCornerShape(10.dp),
+        color = color.copy(alpha = 0.12f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = 0.45f)),
+        modifier = modifier.clickable { onClick() }
     ) {
-        Text(
-            text = label,
-            color = color,
-            fontSize = 9.5.sp,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = color,
+                modifier = Modifier.size(12.dp)
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+                text = label,
+                color = color,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
 

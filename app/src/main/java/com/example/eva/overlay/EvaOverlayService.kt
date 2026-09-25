@@ -333,13 +333,13 @@ class EvaOverlayService : Service() {
                 EvaBubbleOverlayContent(
                     state = state,
                     onDragDelta = { dx, dy -> handleDrag(dx, dy) },
-                    onBubbleTap = { handleBubbleTap() },
-                    onLogoClick = { toggleToHomeScreen() },
-                    onOpenApp = { openFullApp() },
+                    onBubbleClick = { handleBubbleClick() },
+                    onStartVoice = { startListeningMode() },
                     onToggleExpand = {
                         _uiState.update { it.copy(isExpanded = !it.isExpanded) }
                     },
                     onQuickAction = { action -> executeAction(action) },
+                    onOpenApp = { openFullApp() },
                     onCloseOverlay = { stopSelf() }
                 )
             }
@@ -353,13 +353,18 @@ class EvaOverlayService : Service() {
         }
     }
 
+    private var overlayX = 20f
+    private var overlayY = 350f
+
     private fun handleDrag(dx: Float, dy: Float) {
         val params = windowLayoutParams ?: return
         val wm = windowManager ?: return
         val view = composeView ?: return
 
-        params.x = (params.x + dx.toInt()).coerceAtLeast(0)
-        params.y = (params.y + dy.toInt()).coerceAtLeast(0)
+        overlayX = (overlayX + dx).coerceAtLeast(0f)
+        overlayY = (overlayY + dy).coerceAtLeast(0f)
+        params.x = overlayX.toInt()
+        params.y = overlayY.toInt()
 
         try {
             wm.updateViewLayout(view, params)
@@ -368,14 +373,16 @@ class EvaOverlayService : Service() {
         }
     }
 
-    private fun handleBubbleTap() {
+    private fun handleBubbleClick() {
         val currentState = _uiState.value
 
         if (currentState.isProcessing) return
 
         when (currentState.mode) {
             BubbleMode.IDLE -> {
-                startListeningMode()
+                // Tapping the bubble toggles to home screen and expands the quick dock
+                toggleToHomeScreen()
+                _uiState.update { it.copy(isExpanded = !it.isExpanded) }
             }
             BubbleMode.LISTENING -> {
                 speechRecognizer.stopListening()

@@ -26,6 +26,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.content.Intent
+import android.provider.Settings
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import com.example.R
+import com.example.eva.overlay.EvaOverlayService
 import com.example.eva.shizuku.ShizukuConnectionStatus
 import com.example.eva.shizuku.WirelessSessionStatus
 import com.example.eva.ui.EvaViewModel
@@ -62,6 +68,7 @@ fun HomeScreen(
     val shizukuInfo by viewModel.shizukuState.collectAsState()
     val wirelessSession by viewModel.wirelessSession.collectAsState()
     val statusBanner by viewModel.statusBanner.collectAsState()
+    val context = LocalContext.current
 
     val currentHour = remember { Calendar.getInstance().get(Calendar.HOUR_OF_DAY) }
     val greeting = remember(currentHour) {
@@ -74,6 +81,7 @@ fun HomeScreen(
     }
 
     val quickActions = listOf(
+        QuickActionItem("Overlay", Icons.Default.PictureInPicture, "open display overlay"),
         QuickActionItem("Flashlight", Icons.Default.FlashlightOn, "turn on flashlight"),
         QuickActionItem("Status", Icons.Default.BatteryChargingFull, "how is my phone"),
         QuickActionItem("Voice Memo", Icons.Default.Mic, "start voice recording"),
@@ -492,6 +500,128 @@ fun HomeScreen(
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = if (wirelessSession.sessionStatus == WirelessSessionStatus.ACTIVE_CONNECTED) "Manage Bridge" else "Bridge Console",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // Floating Display Overlay Card with Premium White Logo
+        EvaGlassCard(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            shape = CircleShape,
+                            color = Color(0xFF161B22),
+                            border = androidx.compose.foundation.BorderStroke(2.dp, Color.White),
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            androidx.compose.foundation.Image(
+                                painter = painterResource(id = R.drawable.ic_eva_white_logo),
+                                contentDescription = "EVA Premium White Logo",
+                                modifier = Modifier.padding(4.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "FLOATING DISPLAY OVERLAY",
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.5.sp
+                        )
+                    }
+
+                    val overlayGranted = EvaOverlayService.isOverlayPermissionGranted(context)
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (overlayGranted) EvaSuccessGreen.copy(alpha = 0.15f) else EvaYellowBright.copy(alpha = 0.15f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, if (overlayGranted) EvaSuccessGreen else EvaYellowBright)
+                    ) {
+                        Text(
+                            text = if (overlayGranted) "READY" else "PERMISSION NEEDED",
+                            color = if (overlayGranted) EvaSuccessGreen else EvaYellowBright,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Text(
+                    text = "Floating bubble with premium white logo. Stays on screen over any app (clicking anywhere will not vanish it). Speak commands like 'Open Adguard', 'Close ads', and 'Turn the protection on'. Shizuku powers full screen analysis, click, scroll, and slide access.",
+                    color = EvaTextSecondary,
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            if (EvaOverlayService.isOverlayPermissionGranted(context)) {
+                                val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                                    addCategory(Intent.CATEGORY_HOME)
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
+                                context.startActivity(homeIntent)
+                                EvaOverlayService.startOverlay(context)
+                            } else {
+                                val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
+                                context.startActivity(intent)
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color.White,
+                            contentColor = Color(0xFF090A0E)
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PictureInPicture,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Open Display Overlay",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            viewModel.processCommand("close ads")
+                        },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = EvaYellowPrimary),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x33FFD54F)),
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                    ) {
+                        Text(
+                            text = "Close Ads",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold
                         )

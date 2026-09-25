@@ -135,7 +135,13 @@ class ShizukuManager(private val context: Context) {
     }
 
     fun checkStatus() {
-        val installed = isShizukuInstalled()
+        val pingAlive = try {
+            Shizuku.pingBinder()
+        } catch (_: Exception) {
+            false
+        }
+
+        val installed = pingAlive || isShizukuInstalled()
         if (!installed) {
             _shizukuState.value = ShizukuInfo(
                 status = ShizukuConnectionStatus.NOT_INSTALLED,
@@ -143,12 +149,6 @@ class ShizukuManager(private val context: Context) {
                 lastPingMessage = "Shizuku app is not installed on this device."
             )
             return
-        }
-
-        val pingAlive = try {
-            Shizuku.pingBinder()
-        } catch (_: Exception) {
-            false
         }
 
         if (!pingAlive) {

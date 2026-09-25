@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import com.example.eva.context.ContextManager
 import com.example.eva.shizuku.AdbCapabilityManager
+import com.example.eva.shizuku.DeviceScreenAutomation
 import com.example.eva.shizuku.ShizukuManager
 
 class ToolRegistry(
@@ -16,7 +17,8 @@ class ToolRegistry(
     val pdfAssistant: PdfAssistant,
     val shizukuManager: ShizukuManager,
     val adbCapabilityManager: AdbCapabilityManager,
-    val contextManager: ContextManager
+    val contextManager: ContextManager,
+    val deviceScreenAutomation: DeviceScreenAutomation = DeviceScreenAutomation(context, shizukuManager)
 ) {
 
     val toolsList: List<ToolDefinition> = listOf(
@@ -26,6 +28,10 @@ class ToolRegistry(
         ToolDefinition("open_settings", "Settings Shortcuts", "Navigates to system Wi-Fi, Bluetooth, Apps, Display, or Sound settings", ToolCategory.DEVICE),
         ToolDefinition("open_app", "App Launcher", "Launches installed Android applications by name or package", ToolCategory.APPS),
         ToolDefinition("search_apps", "App Search", "Finds installed packages and launchable utilities", ToolCategory.APPS),
+        ToolDefinition("close_ads", "Close Ads", "Analyzes screen and dismisses active ads via Shizuku privileged shell", ToolCategory.ADVANCED, supportsShizuku = true),
+        ToolDefinition("turn_protection_on", "Turn Protection On", "Toggles AdGuard/VPN protection switch on via screen analysis", ToolCategory.ADVANCED, supportsShizuku = true),
+        ToolDefinition("screen_automation", "Screen Automation", "Clicks, scrolls, or slides anywhere by analyzing screen layout", ToolCategory.ADVANCED, supportsShizuku = true),
+        ToolDefinition("display_overlay", "Floating Display Overlay", "Launches persistent floating bubble overlay to talk to EVA", ToolCategory.AUTOMATION),
         ToolDefinition("start_voice_recording", "Voice Recorder", "Records voice memos to secure local storage", ToolCategory.MEDIA, listOf(Manifest.permission.RECORD_AUDIO)),
         ToolDefinition("stop_voice_recording", "Stop Voice Recording", "Saves and concludes active voice recording", ToolCategory.MEDIA),
         ToolDefinition("play_music", "Music Player", "Plays or resumes local audio tracks", ToolCategory.MEDIA),
@@ -196,10 +202,43 @@ class ToolRegistry(
                 val info = shizukuManager.shizukuState.value
                 ToolExecutionResult(true, info.lastPingMessage, data = info)
             }
-            "adb_capability" -> {
-                val capId = parameters["capability"] ?: action
-                val adbRes = adbCapabilityManager.executeWhitelistedCapability(capId)
-                ToolExecutionResult(adbRes.isSuccess, adbRes.output, data = adbRes)
+            "close_ads" -> {
+                val (ok, msg) = deviceScreenAutomation.closeAds()
+                ToolExecutionResult(ok, msg)
+            }
+            "turn_protection_on" -> {
+                val (ok, msg) = deviceScreenAutomation.turnProtectionOn()
+                ToolExecutionResult(ok, msg)
+            }
+            "screen_automation" -> {
+                val targetAction = parameters["action"] ?: action
+                val query = parameters["query"] ?: parameters["text"] ?: ""
+                val res = when (targetAction.lowercase()) {
+                    "click", "tap" -> deviceScreenAutomation.clickByText(query)
+                    "scroll_down" -> deviceScreenAutomation.scrollDown()
+                    "scroll_up" -> deviceScreenAutomation.scrollUp()
+                    "slide_left" -> deviceScreenAutomation.slideLeft()
+                    "slide_right" -> deviceScreenAutomation.slideRight()
+                    else -> Pair(false, "Unknown screen automation action: $targetAction")
+                }
+                ToolExecutionResult(res.first, res.second)
+            }
+            "display_overlay" -> {
+                if (com.example.eva.overlay.EvaOverlayService.isOverlayPermissionGranted(context)) {
+                    val homeIntent = android.content.Intent(android.content.Intent.ACTION_MAIN).apply {
+                        addCategory(android.content.Intent.CATEGORY_HOME)
+                        flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    context.startActivity(homeIntent)
+                    com.example.eva.overlay.EvaOverlayService.startOverlay(context)
+                    ToolExecutionResult(true, "Display overlay active. Switched to home screen.")
+                } else {
+                    val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                        flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    context.startActivity(intent)
+                    ToolExecutionResult(false, "Please grant 'Display over other apps' permission to enable the floating bubble.")
+                }
             }
             else -> ToolExecutionResult(false, "Unknown tool: $toolName")
         }

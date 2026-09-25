@@ -195,6 +195,64 @@ class CommandDispatcher(
             return CommandResult(spokenResponse = "Searching YouTube for $query.", toolName = "youtube_search", toolResult = res.message, isSuccess = res.isSuccess)
         }
 
+        // Display Overlay: "open display overlay", "open display overlay to talk to me", "floating bubble"
+        if (lower.contains("display overlay") || lower.contains("floating bubble") || lower.contains("open overlay")) {
+            val res = toolRegistry.executeTool("display_overlay", "start", emptyMap())
+            return CommandResult(
+                spokenResponse = if (res.isSuccess) "Starting display overlay bubble. Switching to home screen now!" else res.message,
+                toolName = "display_overlay",
+                toolResult = res.message,
+                isSuccess = res.isSuccess
+            )
+        }
+
+        // Close ads: "close ads", "close ad", "skip ad", "dismiss ad"
+        if (lower.contains("close ad") || lower.contains("close ads") || lower.contains("skip ad") || lower == "close the ad") {
+            val (ok, msg) = toolRegistry.deviceScreenAutomation.closeAds()
+            return CommandResult(
+                spokenResponse = msg,
+                toolName = "close_ads",
+                toolResult = msg,
+                isSuccess = ok
+            )
+        }
+
+        // Turn protection on: "turn the protection on", "turn on protection", "enable protection"
+        if (lower.contains("turn the protection on") || lower.contains("turn on protection") || lower.contains("protection on") || lower.contains("enable protection")) {
+            val (ok, msg) = toolRegistry.deviceScreenAutomation.turnProtectionOn()
+            return CommandResult(
+                spokenResponse = msg,
+                toolName = "turn_protection_on",
+                toolResult = msg,
+                isSuccess = ok
+            )
+        }
+
+        // Screen gestures: "scroll down", "scroll up", "slide left", "slide right"
+        if (lower.contains("scroll down")) {
+            val (ok, msg) = toolRegistry.deviceScreenAutomation.scrollDown()
+            return CommandResult(spokenResponse = msg, toolName = "scroll_down", toolResult = msg, isSuccess = ok)
+        }
+        if (lower.contains("scroll up")) {
+            val (ok, msg) = toolRegistry.deviceScreenAutomation.scrollUp()
+            return CommandResult(spokenResponse = msg, toolName = "scroll_up", toolResult = msg, isSuccess = ok)
+        }
+        if (lower.contains("slide left") || lower.contains("swipe left")) {
+            val (ok, msg) = toolRegistry.deviceScreenAutomation.slideLeft()
+            return CommandResult(spokenResponse = msg, toolName = "slide_left", toolResult = msg, isSuccess = ok)
+        }
+        if (lower.contains("slide right") || lower.contains("swipe right")) {
+            val (ok, msg) = toolRegistry.deviceScreenAutomation.slideRight()
+            return CommandResult(spokenResponse = msg, toolName = "slide_right", toolResult = msg, isSuccess = ok)
+        }
+
+        // Click on screen: "click [query]", "tap [query]"
+        if (lower.startsWith("click ") || lower.startsWith("tap ")) {
+            val query = command.substringAfter(" ").trim()
+            val (ok, msg) = toolRegistry.deviceScreenAutomation.clickByText(query)
+            return CommandResult(spokenResponse = msg, toolName = "click_screen", toolResult = msg, isSuccess = ok)
+        }
+
         // Launch app: "open [app]" or "launch [app]"
         if (lower.startsWith("open ") || lower.startsWith("launch ")) {
             val appName = command.substringAfter(" ").trim()
@@ -202,6 +260,16 @@ class CommandDispatcher(
             if (appName.contains("wifi") || appName.contains("wi-fi") || appName.contains("bluetooth") || appName.contains("settings")) {
                 val sRes = toolRegistry.deviceTools.openSettings(appName)
                 return CommandResult(spokenResponse = "Opening $appName settings.", toolName = "open_settings", toolResult = sRes.message, isSuccess = sRes.isSuccess)
+            }
+            // Check AdGuard / Shizuku automated launch
+            if (appName.contains("adguard", ignoreCase = true)) {
+                val (ok, msg) = toolRegistry.deviceScreenAutomation.launchApp("AdGuard")
+                return CommandResult(
+                    spokenResponse = if (ok) "Opened AdGuard. I am waiting for your next command." else msg,
+                    toolName = "open_app",
+                    toolResult = msg,
+                    isSuccess = ok
+                )
             }
             val res = toolRegistry.appLauncherTools.launchAppByName(appName)
             if (res.isSuccess) {

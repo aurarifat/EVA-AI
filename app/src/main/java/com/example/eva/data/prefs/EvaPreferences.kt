@@ -29,12 +29,28 @@ data class EvaSettings(
     val fallbackProvider: AiProviderType = AiProviderType.OPEN_ROUTER,
     val voiceSpeed: Float = 1.0f,
     val voicePitch: Float = 1.05f,
-    val voiceLanguage: String = "en-US", // "en-US", "bn-BD", etc.
+    val voiceLanguage: String = "en-US",
     val autoSpeak: Boolean = true,
     val isSilentMode: Boolean = false,
     val silentUntilMillis: Long = 0L,
     val isSleepMode: Boolean = false,
-    val firstRunCompleted: Boolean = false
+    val firstRunCompleted: Boolean = false,
+
+    // Phase 1: Coordinate & Debug Overlay
+    val debugTapCrosshair: Boolean = false,
+
+    // Phase 4: Core AI Configuration
+    val isAgentMode: Boolean = true, // Chat mode (false) vs Agent mode (true)
+    val temperature: Float = 0.7f,
+    val maxTokens: Int = 2048,
+    val maxSteps: Int = 10,
+    val disableMaxSteps: Boolean = false,
+    val useScreenCompression: Boolean = true,
+    val sendSystemPrompt: Boolean = true,
+
+    // Phase 7: Telegram Integration
+    val telegramEnabled: Boolean = false,
+    val telegramPairedChatId: Long? = null
 )
 
 class EvaPreferences(private val context: Context) {
@@ -58,6 +74,18 @@ class EvaPreferences(private val context: Context) {
         val SILENT_UNTIL = longPreferencesKey("silent_until")
         val IS_SLEEP_MODE = booleanPreferencesKey("is_sleep_mode")
         val FIRST_RUN_COMPLETED = booleanPreferencesKey("first_run_completed")
+
+        // New settings
+        val DEBUG_TAP_CROSSHAIR = booleanPreferencesKey("debug_tap_crosshair")
+        val IS_AGENT_MODE = booleanPreferencesKey("is_agent_mode")
+        val TEMPERATURE = floatPreferencesKey("temperature")
+        val MAX_TOKENS = intPreferencesKey("max_tokens")
+        val MAX_STEPS = intPreferencesKey("max_steps")
+        val DISABLE_MAX_STEPS = booleanPreferencesKey("disable_max_steps")
+        val USE_SCREEN_COMPRESSION = booleanPreferencesKey("use_screen_compression")
+        val SEND_SYSTEM_PROMPT = booleanPreferencesKey("send_system_prompt")
+        val TELEGRAM_ENABLED = booleanPreferencesKey("telegram_enabled")
+        val TELEGRAM_PAIRED_CHAT_ID = longPreferencesKey("telegram_paired_chat_id")
     }
 
     val settingsFlow: Flow<EvaSettings> = context.dataStore.data.map { prefs ->
@@ -84,7 +112,18 @@ class EvaPreferences(private val context: Context) {
             isSilentMode = prefs[Keys.IS_SILENT_MODE] ?: false,
             silentUntilMillis = prefs[Keys.SILENT_UNTIL] ?: 0L,
             isSleepMode = prefs[Keys.IS_SLEEP_MODE] ?: false,
-            firstRunCompleted = prefs[Keys.FIRST_RUN_COMPLETED] ?: false
+            firstRunCompleted = prefs[Keys.FIRST_RUN_COMPLETED] ?: false,
+
+            debugTapCrosshair = prefs[Keys.DEBUG_TAP_CROSSHAIR] ?: false,
+            isAgentMode = prefs[Keys.IS_AGENT_MODE] ?: true,
+            temperature = prefs[Keys.TEMPERATURE] ?: 0.7f,
+            maxTokens = prefs[Keys.MAX_TOKENS] ?: 2048,
+            maxSteps = prefs[Keys.MAX_STEPS] ?: 10,
+            disableMaxSteps = prefs[Keys.DISABLE_MAX_STEPS] ?: false,
+            useScreenCompression = prefs[Keys.USE_SCREEN_COMPRESSION] ?: true,
+            sendSystemPrompt = prefs[Keys.SEND_SYSTEM_PROMPT] ?: true,
+            telegramEnabled = prefs[Keys.TELEGRAM_ENABLED] ?: false,
+            telegramPairedChatId = prefs[Keys.TELEGRAM_PAIRED_CHAT_ID]
         )
     }
 
@@ -103,6 +142,13 @@ class EvaPreferences(private val context: Context) {
         context.dataStore.edit {
             it[Keys.OPEN_ROUTER_URL] = url
             it[Keys.OPEN_ROUTER_MODEL] = model
+        }
+    }
+
+    suspend fun updateCustomOpenAi(url: String, model: String) {
+        context.dataStore.edit {
+            it[Keys.CUSTOM_OPENAI_URL] = url
+            it[Keys.CUSTOM_OPENAI_MODEL] = model
         }
     }
 
@@ -132,5 +178,44 @@ class EvaPreferences(private val context: Context) {
 
     suspend fun setFirstRunCompleted(completed: Boolean) {
         context.dataStore.edit { it[Keys.FIRST_RUN_COMPLETED] = completed }
+    }
+
+    suspend fun setDebugTapCrosshair(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.DEBUG_TAP_CROSSHAIR] = enabled }
+    }
+
+    suspend fun setIsAgentMode(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.IS_AGENT_MODE] = enabled }
+    }
+
+    suspend fun updateModelParams(temperature: Float, maxTokens: Int, maxSteps: Int, disableMaxSteps: Boolean) {
+        context.dataStore.edit {
+            it[Keys.TEMPERATURE] = temperature
+            it[Keys.MAX_TOKENS] = maxTokens
+            it[Keys.MAX_STEPS] = maxSteps
+            it[Keys.DISABLE_MAX_STEPS] = disableMaxSteps
+        }
+    }
+
+    suspend fun setUseScreenCompression(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.USE_SCREEN_COMPRESSION] = enabled }
+    }
+
+    suspend fun setSendSystemPrompt(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.SEND_SYSTEM_PROMPT] = enabled }
+    }
+
+    suspend fun setTelegramEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.TELEGRAM_ENABLED] = enabled }
+    }
+
+    suspend fun setTelegramPairedChatId(chatId: Long?) {
+        context.dataStore.edit {
+            if (chatId == null) {
+                it.remove(Keys.TELEGRAM_PAIRED_CHAT_ID)
+            } else {
+                it[Keys.TELEGRAM_PAIRED_CHAT_ID] = chatId
+            }
+        }
     }
 }

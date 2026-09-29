@@ -33,7 +33,9 @@ interface AiProvider {
     val providerType: AiProviderType
     suspend fun generateResponse(
         messages: List<ChatMessage>,
-        toolsPrompt: String? = null
+        toolsPrompt: String? = null,
+        temperatureOverride: Float? = null,
+        maxTokensOverride: Int? = null
     ): AiResponse
 
     suspend fun testConnection(): ProviderTestResult

@@ -34,6 +34,7 @@ class DeviceScreenAutomation(
     private val shizukuManager: ShizukuManager
 ) {
 
+    private val geometryManager = com.example.eva.automation.ScreenGeometryManager(context)
     private val boundsPattern = Pattern.compile("\\[(\\d+),(\\d+)\\]\\[(\\d+),(\\d+)\\]")
 
     /**
@@ -179,9 +180,10 @@ class DeviceScreenAutomation(
         }
 
         // 2. Check for corner close icon (top-right or top-left corner clickable small element)
+        val (screenWidth, screenHeight) = geometryManager.refreshDimensions()
         val cornerNode = nodes.firstOrNull { node ->
-            node.clickable && node.bounds.width() in 20..220 && node.bounds.height() in 20..220 &&
-                node.bounds.top < 400 && (node.bounds.left > 700 || node.bounds.right < 350)
+            node.clickable && node.bounds.width() in 20..260 && node.bounds.height() in 20..260 &&
+                node.bounds.top < (screenHeight * 0.20) && (node.bounds.left > (screenWidth * 0.65) || node.bounds.right < (screenWidth * 0.35))
         }
 
         if (cornerNode != null) {
@@ -241,9 +243,9 @@ class DeviceScreenAutomation(
             }
         }
 
-        // Fallback for AdGuard: AdGuard's main power button is centered in the upper-mid screen
-        // Center coordinates: x ~ 540, y ~ 950 on 1080x2400
-        val (centerOk, _) = tap(540, 960)
+        // Dynamic center coordinates via geometryManager (upper-mid screen)
+        val (w, h) = geometryManager.refreshDimensions()
+        val (centerOk, _) = tap(w / 2, (h * 0.40).toInt())
         if (centerOk) {
             Pair(true, "Activated central protection switch.")
         } else {
@@ -252,32 +254,42 @@ class DeviceScreenAutomation(
     }
 
     /**
-     * Executes scroll gestures.
+     * Executes scroll gestures dynamically based on runtime screen dimensions.
      */
     suspend fun scrollDown(distance: Int = 800): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        val (w, h) = geometryManager.refreshDimensions()
+        val startY = (h * 0.70).toInt()
+        val endY = (startY - distance).coerceAtLeast((h * 0.15).toInt())
         val (code, out) = shizukuManager.executeRawCommand(
-            arrayOf("input", "swipe", "540", "1500", "540", "${1500 - distance}", "300")
+            arrayOf("input", "swipe", "${w / 2}", "$startY", "${w / 2}", "$endY", "300")
         )
         if (code == 0) Pair(true, "Scrolled down.") else Pair(false, out)
     }
 
     suspend fun scrollUp(distance: Int = 800): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        val (w, h) = geometryManager.refreshDimensions()
+        val startY = (h * 0.25).toInt()
+        val endY = (startY + distance).coerceAtMost((h * 0.85).toInt())
         val (code, out) = shizukuManager.executeRawCommand(
-            arrayOf("input", "swipe", "540", "700", "540", "${700 + distance}", "300")
+            arrayOf("input", "swipe", "${w / 2}", "$startY", "${w / 2}", "$endY", "300")
         )
         if (code == 0) Pair(true, "Scrolled up.") else Pair(false, out)
     }
 
     suspend fun slideLeft(): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        val (w, h) = geometryManager.refreshDimensions()
+        val cy = h / 2
         val (code, out) = shizukuManager.executeRawCommand(
-            arrayOf("input", "swipe", "900", "1200", "180", "1200", "300")
+            arrayOf("input", "swipe", "${(w * 0.85).toInt()}", "$cy", "${(w * 0.15).toInt()}", "$cy", "300")
         )
         if (code == 0) Pair(true, "Slid left.") else Pair(false, out)
     }
 
     suspend fun slideRight(): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        val (w, h) = geometryManager.refreshDimensions()
+        val cy = h / 2
         val (code, out) = shizukuManager.executeRawCommand(
-            arrayOf("input", "swipe", "180", "1200", "900", "1200", "300")
+            arrayOf("input", "swipe", "${(w * 0.15).toInt()}", "$cy", "${(w * 0.85).toInt()}", "$cy", "300")
         )
         if (code == 0) Pair(true, "Slid right.") else Pair(false, out)
     }

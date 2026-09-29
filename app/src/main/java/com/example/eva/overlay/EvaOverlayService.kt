@@ -1,5 +1,6 @@
 package com.example.eva.overlay
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,8 +8,10 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
+import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
@@ -20,6 +23,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
@@ -94,6 +98,25 @@ class EvaOverlayService : Service() {
             } else true
         }
 
+        fun openOverlaySettings(context: Context) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val intent = Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:${context.packageName}")
+                ).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                try {
+                    context.startActivity(intent)
+                } catch (_: Exception) {
+                    val fallback = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    context.startActivity(fallback)
+                }
+            }
+        }
+
         fun startOverlay(context: Context) {
             val intent = Intent(context, EvaOverlayService::class.java).apply {
                 action = ACTION_START_OVERLAY
@@ -106,6 +129,18 @@ class EvaOverlayService : Service() {
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error starting overlay service: ${e.message}", e)
+            }
+        }
+
+        var activeInstance: EvaOverlayService? = null
+            private set
+
+        fun showTapCrosshair(x: Int, y: Int) {
+            val inst = activeInstance
+            if (inst != null) {
+                inst.serviceScope.launch(Dispatchers.Main) {
+                    inst.displayTapCrosshair(x, y)
+                }
             }
         }
 
@@ -125,6 +160,7 @@ class EvaOverlayService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        activeInstance = this
         try {
             createNotificationChannel()
             startForegroundNotification()
@@ -184,7 +220,8 @@ class EvaOverlayService : Service() {
             pdfAssistant = pdfTools,
             shizukuManager = shizukuManager,
             adbCapabilityManager = adbCap,
-            contextManager = contextManager
+            contextManager = contextManager,
+            preferences = preferences
         )
 
         commandDispatcher = CommandDispatcher(
@@ -269,13 +306,13 @@ class EvaOverlayService : Service() {
                 startForeground(
                     NOTIFICATION_ID,
                     notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
                 )
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 startForeground(
                     NOTIFICATION_ID,
                     notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_NONE
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
                 )
             } else {
                 startForeground(NOTIFICATION_ID, notification)
@@ -300,8 +337,7 @@ class EvaOverlayService : Service() {
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
-        // FLAG_NOT_FOCUSABLE is critical: clicks outside the bubble never vanish the overlay
-        // and pass directly through to background apps or the home launcher.
+        // FLAG_NOT_FOCUSABLE is default: background app touches pass through seamlessly
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -335,12 +371,17 @@ class EvaOverlayService : Service() {
                     onDragDelta = { dx, dy -> handleDrag(dx, dy) },
                     onBubbleClick = { handleBubbleClick() },
                     onStartVoice = { startListeningMode() },
+                    onStopVoice = { stopListeningMode() },
                     onToggleExpand = {
-                        _uiState.update { it.copy(isExpanded = !it.isExpanded) }
+                        val nextExpanded = !_uiState.value.isExpanded
+                        _uiState.update { it.copy(isExpanded = nextExpanded) }
+                        if (!nextExpanded) setFocusable(false)
                     },
+                    onGoHome = { toggleToHomeScreen() },
                     onQuickAction = { action -> executeAction(action) },
                     onOpenApp = { openFullApp() },
-                    onCloseOverlay = { stopSelf() }
+                    onCloseOverlay = { stopSelf() },
+                    onRequestInputFocus = { focusable -> setFocusable(focusable) }
                 )
             }
         }
@@ -353,6 +394,25 @@ class EvaOverlayService : Service() {
         }
     }
 
+    private fun setFocusable(focusable: Boolean) {
+        val params = windowLayoutParams ?: return
+        val wm = windowManager ?: return
+        val view = composeView ?: return
+
+        if (focusable) {
+            params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+            params.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+        } else {
+            params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        }
+
+        try {
+            wm.updateViewLayout(view, params)
+        } catch (e: Exception) {
+            Log.w(TAG, "Error updating focusable layout: ${e.message}")
+        }
+    }
+
     private var overlayX = 20f
     private var overlayY = 350f
 
@@ -361,8 +421,12 @@ class EvaOverlayService : Service() {
         val wm = windowManager ?: return
         val view = composeView ?: return
 
-        overlayX = (overlayX + dx).coerceAtLeast(0f)
-        overlayY = (overlayY + dy).coerceAtLeast(0f)
+        val metrics = resources.displayMetrics
+        val maxX = (metrics.widthPixels - 70).coerceAtLeast(100).toFloat()
+        val maxY = (metrics.heightPixels - 120).coerceAtLeast(100).toFloat()
+
+        overlayX = (overlayX + dx).coerceIn(0f, maxX)
+        overlayY = (overlayY + dy).coerceIn(30f, maxY)
         params.x = overlayX.toInt()
         params.y = overlayY.toInt()
 
@@ -380,19 +444,13 @@ class EvaOverlayService : Service() {
 
         when (currentState.mode) {
             BubbleMode.IDLE -> {
-                // Tapping the bubble toggles to home screen and expands the quick dock
-                toggleToHomeScreen()
-                _uiState.update { it.copy(isExpanded = !it.isExpanded) }
+                // Tapping the bubble toggles the quick dock right on the current screen
+                val nextExpanded = !currentState.isExpanded
+                _uiState.update { it.copy(isExpanded = nextExpanded) }
+                if (!nextExpanded) setFocusable(false)
             }
             BubbleMode.LISTENING -> {
-                speechRecognizer.stopListening()
-                _uiState.update {
-                    it.copy(
-                        mode = BubbleMode.IDLE,
-                        statusText = "EVA Ready",
-                        recognizedText = ""
-                    )
-                }
+                stopListeningMode()
             }
             BubbleMode.SPEAKING -> {
                 tts.stop()
@@ -406,12 +464,35 @@ class EvaOverlayService : Service() {
         }
     }
 
+    private fun stopListeningMode() {
+        speechRecognizer.stopListening()
+        _uiState.update {
+            it.copy(
+                mode = BubbleMode.IDLE,
+                statusText = "EVA Ready",
+                recognizedText = ""
+            )
+        }
+    }
+
     private fun startListeningMode() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            _uiState.update {
+                it.copy(
+                    mode = BubbleMode.IDLE,
+                    statusText = "Mic permission required. Open EVA app to allow.",
+                    recognizedText = "",
+                    isExpanded = true
+                )
+            }
+            return
+        }
+
         tts.stop()
         _uiState.update {
             it.copy(
                 mode = BubbleMode.LISTENING,
-                statusText = "Listening...",
+                statusText = "Listening... Speak your command",
                 recognizedText = "",
                 spokenText = ""
             )
@@ -427,7 +508,7 @@ class EvaOverlayService : Service() {
                     _uiState.update {
                         it.copy(
                             mode = BubbleMode.IDLE,
-                            statusText = "EVA Ready",
+                            statusText = err,
                             recognizedText = ""
                         )
                     }
@@ -438,7 +519,7 @@ class EvaOverlayService : Service() {
             _uiState.update {
                 it.copy(
                     mode = BubbleMode.IDLE,
-                    statusText = "EVA Ready"
+                    statusText = "Voice error: ${e.localizedMessage}"
                 )
             }
         }
@@ -593,10 +674,62 @@ class EvaOverlayService : Service() {
     }
 
     private fun executeAction(command: String) {
+        setFocusable(false)
         processCommand(command)
     }
 
+    fun displayTapCrosshair(targetX: Int, targetY: Int) {
+        val wm = windowManager ?: return
+        try {
+            val density = resources.displayMetrics.density
+            val size = (36 * density).toInt()
+            val crosshairView = android.widget.ImageView(this).apply {
+                val circle = android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.OVAL
+                    setColor(0x55FFD54F.toInt())
+                    setStroke((2.5f * density).toInt(), 0xFFFFD54F.toInt())
+                }
+                background = circle
+            }
+
+            val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            } else {
+                @Suppress("DEPRECATION")
+                WindowManager.LayoutParams.TYPE_PHONE
+            }
+
+            val params = WindowManager.LayoutParams(
+                size,
+                size,
+                layoutType,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                x = targetX - (size / 2)
+                y = targetY - (size / 2)
+            }
+
+            wm.addView(crosshairView, params)
+
+            serviceScope.launch(Dispatchers.Main) {
+                delay(650)
+                try {
+                    wm.removeView(crosshairView)
+                } catch (_: Exception) {}
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error displaying tap crosshair: ${e.message}")
+        }
+    }
+
     override fun onDestroy() {
+        if (activeInstance == this) {
+            activeInstance = null
+        }
         super.onDestroy()
         try {
             serviceScope.cancel()

@@ -137,4 +137,41 @@ class DeviceTools(private val context: Context) {
             ToolExecutionResult(false, "Could not open $settingType settings: ${e.localizedMessage}")
         }
     }
+
+    fun setAlarm(hour: Int, minutes: Int, label: String = "EVA Alarm"): ToolExecutionResult {
+        return try {
+            val intent = Intent(android.provider.AlarmClock.ACTION_SET_ALARM).apply {
+                putExtra(android.provider.AlarmClock.EXTRA_HOUR, hour)
+                putExtra(android.provider.AlarmClock.EXTRA_MINUTES, minutes)
+                putExtra(android.provider.AlarmClock.EXTRA_MESSAGE, label)
+                putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, false)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+            val timeFormatted = "%02d:%02d".format(hour, minutes)
+            ToolExecutionResult(true, "Alarm set for $timeFormatted ($label).")
+        } catch (e: Exception) {
+            ToolExecutionResult(false, "Could not set alarm: ${e.localizedMessage}")
+        }
+    }
+
+    fun setBrightness(percentage: Int): ToolExecutionResult {
+        return try {
+            val clamped = percentage.coerceIn(0, 100)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.System.canWrite(context)) {
+                val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
+                    data = android.net.Uri.parse("package:${context.packageName}")
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(intent)
+                return ToolExecutionResult(false, "Please grant 'Modify system settings' permission to allow EVA to adjust screen brightness.")
+            }
+
+            val value = (clamped * 255) / 100
+            Settings.System.putInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS, value)
+            ToolExecutionResult(true, "Screen brightness adjusted to $clamped%.")
+        } catch (e: Exception) {
+            ToolExecutionResult(false, "Could not adjust brightness: ${e.localizedMessage}")
+        }
+    }
 }

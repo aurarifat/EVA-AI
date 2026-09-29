@@ -25,7 +25,9 @@ class GeminiProvider(
 
     override suspend fun generateResponse(
         messages: List<ChatMessage>,
-        toolsPrompt: String?
+        toolsPrompt: String?,
+        temperatureOverride: Float?,
+        maxTokensOverride: Int?
     ): AiResponse {
         val startTime = System.currentTimeMillis()
         val apiKey = getApiKey().trim()
@@ -66,6 +68,18 @@ class GeminiProvider(
             contentsArray.put(contentObj)
         }
         requestJson.put("contents", contentsArray)
+
+        // Generation config for ultra-fast response
+        val genConfig = JSONObject()
+        if (temperatureOverride != null) {
+            genConfig.put("temperature", temperatureOverride)
+        }
+        if (maxTokensOverride != null) {
+            genConfig.put("maxOutputTokens", maxTokensOverride)
+        }
+        if (genConfig.length() > 0) {
+            requestJson.put("generationConfig", genConfig)
+        }
 
         val request = Request.Builder()
             .url(url)
@@ -188,17 +202,17 @@ class GeminiProvider(
 
     private fun extractToolCall(content: String): AiToolCall? {
         return try {
-            val jsonStart = content.indexOf("```json")
-            val jsonText = if (jsonStart != -1) {
-                val actualStart = jsonStart + 7
-                val jsonEnd = content.indexOf("```", actualStart)
-                if (jsonEnd != -1) content.substring(actualStart, jsonEnd).trim() else ""
+            val jsonText = if (content.contains("```json")) {
+                val start = content.indexOf("```json") + 7
+                val end = content.indexOf("```", start)
+                if (end != -1) content.substring(start, end).trim() else content.substring(start).trim()
+            } else if (content.contains("```")) {
+                val start = content.indexOf("```") + 3
+                val end = content.indexOf("```", start)
+                if (end != -1) content.substring(start, end).trim() else content.substring(start).trim()
             } else {
-                val braceStart = content.indexOf("{\"tool\":")
-                if (braceStart != -1) {
-                    val braceEnd = content.lastIndexOf("}")
-                    if (braceEnd > braceStart) content.substring(braceStart, braceEnd + 1) else ""
-                } else ""
+                val match = Regex("""\{[\s\S]*?"tool"\s*:[\s\S]*?\}""").find(content)
+                match?.value ?: ""
             }
 
             if (jsonText.isNotBlank()) {

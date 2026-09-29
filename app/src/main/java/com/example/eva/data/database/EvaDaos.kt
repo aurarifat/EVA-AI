@@ -86,3 +86,18 @@ interface FavoriteAppDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdate(app: FavoriteAppEntity)
 }
+
+@Dao
+interface TaskTraceDao {
+    @Query("SELECT * FROM task_execution_traces ORDER BY startTime DESC")
+    fun getAllTraces(): Flow<List<TaskExecutionTraceEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertTrace(trace: TaskExecutionTraceEntity): Long
+
+    @Query("DELETE FROM task_execution_traces WHERE id = :id")
+    suspend fun deleteTrace(id: Long)
+
+    @Query("DELETE FROM task_execution_traces")
+    suspend fun clearAllTraces()
+}

@@ -23,6 +23,13 @@ data class PhoneNumberAnalysis(
 
 class ContactTools(private val context: Context) {
 
+    fun hasContactsPermission(): Boolean {
+        return androidx.core.content.ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.READ_CONTACTS
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
+
     suspend fun searchContacts(query: String): List<ContactEntry> = withContext(Dispatchers.IO) {
         val contacts = mutableListOf<ContactEntry>()
         val uri = ContactsContract.CommonDataKinds.Phone.CONTENT_URI

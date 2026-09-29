@@ -46,6 +46,7 @@ fun ConversationScreen(
     val voiceState by viewModel.voiceState.collectAsState()
     val isSpeaking by viewModel.isSpeaking.collectAsState()
     val speechText by viewModel.speechText.collectAsState()
+    val activePlan by viewModel.currentMultiStepPlan.collectAsState()
     var inputText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -194,54 +195,112 @@ fun ConversationScreen(
         },
         containerColor = EvaObsidian
     ) { padding ->
-        if (conversations.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        imageVector = Icons.Default.ChatBubbleOutline,
-                        contentDescription = null,
-                        tint = EvaTextTertiary,
-                        modifier = Modifier.size(48.dp)
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = "No conversation yet",
-                        color = EvaTextSecondary,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Text(
-                        text = "Say \"EVA, open YouTube\" or tap the mic below.",
-                        color = EvaTextTertiary,
-                        fontSize = 12.sp
-                    )
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+        ) {
+            // Active Agent Task progress banner
+            if (activePlan != null && !activePlan!!.isCancelled) {
+                Surface(
+                    color = Color(0xFF1A1F2C),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, EvaCyanAccent),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = EvaCyanAccent
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = "Agent Executing...",
+                                    color = EvaCyanAccent,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = activePlan?.originalQuery ?: "",
+                                    color = EvaTextSecondary,
+                                    fontSize = 11.sp,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                        TextButton(
+                            onClick = { viewModel.cancelCurrentTask() },
+                            colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFFF5252))
+                        ) {
+                            Text("Cancel", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
             }
-        } else {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                contentPadding = PaddingValues(vertical = 12.dp)
-            ) {
-                items(conversations, key = { it.id }) { msg ->
-                    ConversationBubble(
-                        message = msg,
-                        onRepeat = { viewModel.repeatLastResponse() },
-                        onCopy = {
-                            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            cm.setPrimaryClip(ClipData.newPlainText("EVA message", msg.content))
-                            Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
-                        }
-                    )
+
+            if (conversations.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = Icons.Default.ChatBubbleOutline,
+                            contentDescription = null,
+                            tint = EvaTextTertiary,
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "No conversation yet",
+                            color = EvaTextSecondary,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = "Say \"EVA, open YouTube\" or tap the mic below.",
+                            color = EvaTextTertiary,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .weight(1f)
+                        .padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    contentPadding = PaddingValues(vertical = 12.dp)
+                ) {
+                    items(conversations, key = { it.id }) { msg ->
+                        ConversationBubble(
+                            message = msg,
+                            onRepeat = { viewModel.repeatLastResponse() },
+                            onCopy = {
+                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                cm.setPrimaryClip(ClipData.newPlainText("EVA message", msg.content))
+                                Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -255,8 +314,53 @@ fun ConversationBubble(
     onCopy: () -> Unit
 ) {
     val isUser = message.role == "user"
+    val isTool = message.role == "tool"
     val timeStr = remember(message.timestamp) {
-        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(message.timestamp))
+        SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(message.timestamp))
+    }
+
+    if (isTool) {
+        // Streamed Agent Step Pill
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 2.dp),
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = Color(0xFF131722),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x4400E5FF)),
+                modifier = Modifier.fillMaxWidth(0.92f)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Bolt,
+                        contentDescription = null,
+                        tint = EvaCyanAccent,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = message.content,
+                        color = Color(0xFF80D8FF),
+                        fontSize = 12.sp,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = timeStr,
+                        color = Color(0x66FFFFFF),
+                        fontSize = 9.sp
+                    )
+                }
+            }
+        }
+        return
     }
 
     Column(

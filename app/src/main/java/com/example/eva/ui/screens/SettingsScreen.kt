@@ -22,6 +22,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.eva.automation.ActiveAutomationBackendType
 import com.example.eva.data.prefs.AiProviderType
 import com.example.eva.data.prefs.SecureKeyStore
 import com.example.eva.ui.EvaViewModel
@@ -55,6 +56,15 @@ fun SettingsScreen(
     var voicePitch by remember(settings.voicePitch) { mutableFloatStateOf(settings.voicePitch) }
     var voiceLang by remember(settings.voiceLanguage) { mutableStateOf(settings.voiceLanguage) }
     var autoSpeak by remember(settings.autoSpeak) { mutableStateOf(settings.autoSpeak) }
+
+    var debugTapCrosshair by remember(settings.debugTapCrosshair) { mutableStateOf(settings.debugTapCrosshair) }
+    var isAgentMode by remember(settings.isAgentMode) { mutableStateOf(settings.isAgentMode) }
+    var temperature by remember(settings.temperature) { mutableFloatStateOf(settings.temperature) }
+    var maxSteps by remember(settings.maxSteps) { mutableIntStateOf(settings.maxSteps) }
+    var disableMaxSteps by remember(settings.disableMaxSteps) { mutableStateOf(settings.disableMaxSteps) }
+    var useScreenCompression by remember(settings.useScreenCompression) { mutableStateOf(settings.useScreenCompression) }
+    var sendSystemPrompt by remember(settings.sendSystemPrompt) { mutableStateOf(settings.sendSystemPrompt) }
+    val taskTraces by viewModel.taskTraces.collectAsState()
 
     Scaffold(
         topBar = {
@@ -303,6 +313,395 @@ fun SettingsScreen(
                         colors = ButtonDefaults.buttonColors(containerColor = EvaYellowPrimary, contentColor = Color(0xFF090A0E))
                     ) {
                         Text("Save Voice Settings")
+                    }
+                }
+            }
+
+            // Automation Backend & Gesture System Card
+            EvaGlassCard(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    val activeBackend = viewModel.getActiveBackendType()
+                    val isA11yActive = viewModel.isAccessibilityActive()
+                    val isShizukuActive = viewModel.isShizukuActive()
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("AUTOMATION ENGINE & GESTURE BACKEND", color = EvaYellowGold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = when (activeBackend) {
+                                ActiveAutomationBackendType.ACCESSIBILITY -> EvaSuccessGreen.copy(alpha = 0.2f)
+                                ActiveAutomationBackendType.SHIZUKU -> EvaYellowPrimary.copy(alpha = 0.2f)
+                                ActiveAutomationBackendType.NONE -> EvaErrorRed.copy(alpha = 0.2f)
+                            }
+                        ) {
+                            Text(
+                                text = when (activeBackend) {
+                                    ActiveAutomationBackendType.ACCESSIBILITY -> "Active: Accessibility"
+                                    ActiveAutomationBackendType.SHIZUKU -> "Active: Shizuku (Fallback)"
+                                    ActiveAutomationBackendType.NONE -> "Active: None (Disabled)"
+                                },
+                                color = when (activeBackend) {
+                                    ActiveAutomationBackendType.ACCESSIBILITY -> EvaSuccessGreen
+                                    ActiveAutomationBackendType.SHIZUKU -> EvaYellowPrimary
+                                    ActiveAutomationBackendType.NONE -> EvaErrorRed
+                                },
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Accessibility Service Sub-card
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = EvaSurfaceElevated,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.Accessibility, contentDescription = null, tint = EvaYellowPrimary, modifier = Modifier.size(20.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("EVA Accessibility Service", color = EvaTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                                Text(
+                                    text = if (isA11yActive) "Running" else "Disabled",
+                                    color = if (isA11yActive) EvaSuccessGreen else EvaErrorRed,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "Delivers real-time screen node analysis, coordinate-safe gesture taps, text typing & password protection without requiring ADB.",
+                                color = EvaTextSecondary,
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                                    intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                    context.startActivity(intent)
+                                },
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = EvaYellowPrimary),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, EvaYellowPrimary.copy(alpha = 0.5f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(if (isA11yActive) "Accessibility Settings" else "Enable in Android Settings", fontSize = 12.sp)
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Shizuku Fallback Sub-card
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = EvaSurfaceElevated,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.Cable, contentDescription = null, tint = EvaCyanAccent, modifier = Modifier.size(20.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Shizuku ADB Shell (Fallback)", color = EvaTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                                Text(
+                                    text = if (isShizukuActive) "Authorized" else "Unauthorized",
+                                    color = if (isShizukuActive) EvaSuccessGreen else EvaTextTertiary,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "Secondary fallback engine for executing shell input gestures when accessibility is unavailable.",
+                                color = EvaTextSecondary,
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedButton(
+                                onClick = onNavigateToShizuku,
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = EvaCyanAccent),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, EvaCyanAccent.copy(alpha = 0.5f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Default.Sensors, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Shizuku Status & Wireless Pairing", fontSize = 12.sp)
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Split-screen unsupported notice (Required)
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0x22F5A623),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x55F5A623)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.Top) {
+                            Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFF5A623), modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                "Multi-Window / Split-Screen Unsupported: Automation coordinates and screen bounds dynamically target full-screen orientation. Split-screen and multi-window modes are unsupported.",
+                                color = EvaTextSecondary,
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Tap Crosshair Debug Mode Switch
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Debug Tap Crosshair Overlay", color = EvaTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            Text("Draws a brief visual marker at target (x, y) coordinates before tapping or swiping", color = EvaTextSecondary, fontSize = 11.sp)
+                        }
+                        Switch(
+                            checked = debugTapCrosshair,
+                            onCheckedChange = {
+                                debugTapCrosshair = it
+                                viewModel.setDebugTapCrosshair(it)
+                            },
+                            colors = SwitchDefaults.colors(checkedThumbColor = EvaYellowPrimary, checkedTrackColor = Color(0xFF2A2312))
+                        )
+                    }
+                }
+            }
+
+            // Agent Mode & Core AI Parameters Card
+            EvaGlassCard(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("CORE AI PARAMETERS & AGENT MODE", color = EvaYellowGold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Agent Mode Toggle
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Agent Mode (Autonomous Execution)", color = EvaTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            Text("Permits EVA to execute tools and multi-step plans autonomously", color = EvaTextSecondary, fontSize = 11.sp)
+                        }
+                        Switch(
+                            checked = isAgentMode,
+                            onCheckedChange = {
+                                isAgentMode = it
+                                viewModel.updateAgentMode(it)
+                            },
+                            colors = SwitchDefaults.colors(checkedThumbColor = EvaYellowPrimary, checkedTrackColor = Color(0xFF2A2312))
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Temperature
+                    Text("Sampling Temperature: ${"%.2f".format(temperature)}", color = EvaTextPrimary, fontSize = 13.sp)
+                    Slider(
+                        value = temperature,
+                        onValueChange = { temperature = it },
+                        valueRange = 0.0f..1.5f,
+                        colors = SliderDefaults.colors(thumbColor = EvaYellowPrimary, activeTrackColor = EvaYellowPrimary)
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Max Steps
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (disableMaxSteps) "Max Steps: Unlimited" else "Max Steps: $maxSteps",
+                            color = EvaTextPrimary,
+                            fontSize = 13.sp
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(
+                                checked = disableMaxSteps,
+                                onCheckedChange = { disableMaxSteps = it },
+                                colors = CheckboxDefaults.colors(checkedColor = EvaYellowPrimary)
+                            )
+                            Text("Unlimited", color = EvaTextSecondary, fontSize = 12.sp)
+                        }
+                    }
+                    if (!disableMaxSteps) {
+                        Slider(
+                            value = maxSteps.toFloat(),
+                            onValueChange = { maxSteps = it.toInt() },
+                            valueRange = 1f..25f,
+                            steps = 23,
+                            colors = SliderDefaults.colors(thumbColor = EvaYellowPrimary, activeTrackColor = EvaYellowPrimary)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Screen Compression Toggle
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("UI Hierarchy Compression", color = EvaTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            Text("Deduplicates empty container nodes to save model tokens", color = EvaTextSecondary, fontSize = 11.sp)
+                        }
+                        Switch(
+                            checked = useScreenCompression,
+                            onCheckedChange = { useScreenCompression = it },
+                            colors = SwitchDefaults.colors(checkedThumbColor = EvaYellowPrimary, checkedTrackColor = Color(0xFF2A2312))
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // System Prompt Toggle
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Include System Tool Schema", color = EvaTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            Text("Appends full Android tool definitions to every AI prompt", color = EvaTextSecondary, fontSize = 11.sp)
+                        }
+                        Switch(
+                            checked = sendSystemPrompt,
+                            onCheckedChange = { sendSystemPrompt = it },
+                            colors = SwitchDefaults.colors(checkedThumbColor = EvaYellowPrimary, checkedTrackColor = Color(0xFF2A2312))
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Button(
+                        onClick = {
+                            viewModel.updateExecutionParams(
+                                temperature = temperature,
+                                maxTokens = 2048,
+                                maxSteps = maxSteps,
+                                disableMaxSteps = disableMaxSteps,
+                                screenCompression = useScreenCompression,
+                                sendSystemPrompt = sendSystemPrompt
+                            )
+                            Toast.makeText(context, "Saved execution parameters", Toast.LENGTH_SHORT).show()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = EvaYellowPrimary, contentColor = Color(0xFF090A0E)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Save Execution Parameters")
+                    }
+                }
+            }
+
+            // Task Execution History Card
+            EvaGlassCard(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("AGENT TASK EXECUTION HISTORY", color = EvaYellowGold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        if (taskTraces.isNotEmpty()) {
+                            TextButton(onClick = { viewModel.clearTaskTraces() }) {
+                                Text("Clear", color = EvaTextTertiary, fontSize = 11.sp)
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    if (taskTraces.isEmpty()) {
+                        Text(
+                            text = "No autonomous tasks recorded yet. Say \"Open YouTube and search for Physics\" to view execution traces.",
+                            color = EvaTextTertiary,
+                            fontSize = 12.sp
+                        )
+                    } else {
+                        taskTraces.take(5).forEach { trace ->
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = EvaSurfaceElevated,
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    if (trace.status == "COMPLETED") Color(0x334CAF50) else Color(0x33FF5252)
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = trace.userGoal,
+                                            color = EvaTextPrimary,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            maxLines = 1,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Surface(
+                                            shape = RoundedCornerShape(4.dp),
+                                            color = if (trace.status == "COMPLETED") Color(0x224CAF50) else Color(0x22FF5252)
+                                        ) {
+                                            Text(
+                                                text = trace.status,
+                                                color = if (trace.status == "COMPLETED") EvaSuccessGreen else Color(0xFFFF5252),
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "${trace.totalSteps} steps • ${trace.finalSummary}",
+                                        color = EvaTextSecondary,
+                                        fontSize = 11.sp,
+                                        maxLines = 2
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }

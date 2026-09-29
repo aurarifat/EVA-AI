@@ -12,9 +12,10 @@ import androidx.room.RoomDatabase
         ScheduledTaskEntity::class,
         CustomAutomationEntity::class,
         VoiceRecordingEntity::class,
-        FavoriteAppEntity::class
+        FavoriteAppEntity::class,
+        TaskExecutionTraceEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class EvaDatabase : RoomDatabase() {
@@ -24,6 +25,7 @@ abstract class EvaDatabase : RoomDatabase() {
     abstract fun customAutomationDao(): CustomAutomationDao
     abstract fun voiceRecordingDao(): VoiceRecordingDao
     abstract fun favoriteAppDao(): FavoriteAppDao
+    abstract fun taskTraceDao(): TaskTraceDao
 
     companion object {
         @Volatile
@@ -35,7 +37,7 @@ abstract class EvaDatabase : RoomDatabase() {
                     context.applicationContext,
                     EvaDatabase::class.java,
                     "eva_database.db"
-                ).fallbackToDestructiveMigration(false)
+                ).fallbackToDestructiveMigration(true)
                     .build()
                 INSTANCE = instance
                 instance

@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">EVA</string>
+    <string name="accessibility_service_label">EVA Screen Automation Engine</string>
+    <string name="accessibility_service_description">Enables EVA AI to assist you by reading onscreen elements, tapping buttons, typing text, and executing automated assistive tasks across your device.</string>
 </resources>

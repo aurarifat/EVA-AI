@@ -516,7 +516,9 @@ fun HomeScreen(
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // Floating Display Overlay Card with Premium White Logo
+        // Floating Display Overlay Card with Premium White Logo & Quick Dock Controls
+        val overlayGranted = EvaOverlayService.isOverlayPermissionGranted(context)
+
         EvaGlassCard(
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -530,33 +532,32 @@ fun HomeScreen(
                         Surface(
                             shape = CircleShape,
                             color = Color(0xFF161B22),
-                            border = androidx.compose.foundation.BorderStroke(2.dp, Color.White),
+                            border = androidx.compose.foundation.BorderStroke(2.dp, EvaYellowPrimary),
                             modifier = Modifier.size(28.dp)
                         ) {
                             androidx.compose.foundation.Image(
                                 painter = painterResource(id = R.drawable.ic_eva_white_logo),
-                                contentDescription = "EVA Premium White Logo",
-                                modifier = Modifier.padding(4.dp)
+                                contentDescription = "EVA Logo",
+                                modifier = Modifier.padding(3.dp)
                             )
                         }
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "FLOATING DISPLAY OVERLAY",
+                            text = "EVA QUICK DOCK & OVERLAY",
                             color = Color.White,
-                            fontSize = 11.sp,
+                            fontSize = 11.5.sp,
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 0.5.sp
                         )
                     }
 
-                    val overlayGranted = EvaOverlayService.isOverlayPermissionGranted(context)
                     Surface(
                         shape = RoundedCornerShape(8.dp),
                         color = if (overlayGranted) EvaSuccessGreen.copy(alpha = 0.15f) else EvaYellowBright.copy(alpha = 0.15f),
                         border = androidx.compose.foundation.BorderStroke(1.dp, if (overlayGranted) EvaSuccessGreen else EvaYellowBright)
                     ) {
                         Text(
-                            text = if (overlayGranted) "READY" else "PERMISSION NEEDED",
+                            text = if (overlayGranted) "OVERLAY READY" else "PERMISSION NEEDED",
                             color = if (overlayGranted) EvaSuccessGreen else EvaYellowBright,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
@@ -568,13 +569,133 @@ fun HomeScreen(
                 Spacer(modifier = Modifier.height(10.dp))
 
                 Text(
-                    text = "Floating bubble with premium white logo. Stays on screen over any app (clicking anywhere will not vanish it). Speak commands like 'Open Adguard', 'Close ads', and 'Turn the protection on'. Shizuku powers full screen analysis, click, scroll, and slide access.",
+                    text = "The persistent Quick Dock floats over all apps, games, and home screen without vanishing. Tap the bubble anywhere to expand voice controls, typed commands, 'Close Ads', 'Protect ON', and quick tools without leaving your current app.",
                     color = EvaTextSecondary,
                     fontSize = 12.sp,
                     lineHeight = 16.sp
                 )
 
+                if (!overlayGranted) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = Color(0x33FFD54F),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, EvaYellowBright),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = EvaYellowBright,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Overlay permission is required for the Quick Dock to appear over other apps.",
+                                color = Color.White,
+                                fontSize = 11.5.sp,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Button(
+                                onClick = { EvaOverlayService.openOverlaySettings(context) },
+                                colors = ButtonDefaults.buttonColors(containerColor = EvaYellowPrimary, contentColor = Color(0xFF090A0E)),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Text("Grant", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(12.dp))
+
+                // Action Buttons: Start Dock, Stop Dock, Test on Home Screen
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            if (EvaOverlayService.isOverlayPermissionGranted(context)) {
+                                EvaOverlayService.startOverlay(context)
+                            } else {
+                                EvaOverlayService.openOverlaySettings(context)
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = EvaYellowPrimary,
+                            contentColor = Color(0xFF090A0E)
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "Start Quick Dock",
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            EvaOverlayService.stopOverlay(context)
+                        },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFF5252)),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x55FF5252)),
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                    ) {
+                        Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Stop Dock", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Button(
+                    onClick = {
+                        if (EvaOverlayService.isOverlayPermissionGranted(context)) {
+                            EvaOverlayService.startOverlay(context)
+                            MainActivity.toggleToHomeScreen(context)
+                        } else {
+                            EvaOverlayService.openOverlaySettings(context)
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color.White,
+                        contentColor = Color(0xFF090A0E)
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Home,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Start Dock & Go to Home Screen",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
 
                 // Auto-Toggle to Home Screen Preference Switch
                 Surface(
@@ -592,13 +713,13 @@ fun HomeScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                             Text(
-                                text = "Auto-Toggle to Home Screen",
+                                text = "Auto-Toggle to Home on Launch",
                                 color = Color.White,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                text = "When clicking the EVA app, automatically launch bubble & toggle to home screen",
+                                text = "When opening EVA from home screen, immediately start Quick Dock & return to home",
                                 color = EvaTextTertiary,
                                 fontSize = 10.sp,
                                 lineHeight = 13.sp
@@ -617,62 +738,6 @@ fun HomeScreen(
                                 uncheckedThumbColor = EvaTextSecondary,
                                 uncheckedTrackColor = EvaObsidian
                             )
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = {
-                            if (EvaOverlayService.isOverlayPermissionGranted(context)) {
-                                EvaOverlayService.startOverlay(context)
-                                MainActivity.toggleToHomeScreen(context)
-                            } else {
-                                val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
-                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                }
-                                context.startActivity(intent)
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color.White,
-                            contentColor = Color(0xFF090A0E)
-                        ),
-                        shape = RoundedCornerShape(12.dp),
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Home,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Toggle Home Screen",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    OutlinedButton(
-                        onClick = {
-                            viewModel.processCommand("close ads")
-                        },
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = EvaYellowPrimary),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x33FFD54F)),
-                        shape = RoundedCornerShape(12.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-                    ) {
-                        Text(
-                            text = "Close Ads",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold
                         )
                     }
                 }

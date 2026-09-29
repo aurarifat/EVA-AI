@@ -30,7 +30,10 @@ class AiRepository(
                     providerType = AiProviderType.OMNI_ROUTE,
                     getBaseUrl = { settings.omniRouteUrl },
                     getApiKey = { keyStore.getKey(AiProviderType.OMNI_ROUTE) },
-                    getModel = { settings.omniRouteModel }
+                    getModel = { settings.omniRouteModel },
+                    getTemperature = { settings.temperature },
+                    getMaxTokens = { settings.maxTokens },
+                    getSendSystemPrompt = { settings.sendSystemPrompt }
                 )
             }
             AiProviderType.OPEN_ROUTER -> {
@@ -39,6 +42,9 @@ class AiRepository(
                     getBaseUrl = { settings.openRouterUrl },
                     getApiKey = { keyStore.getKey(AiProviderType.OPEN_ROUTER) },
                     getModel = { settings.openRouterModel },
+                    getTemperature = { settings.temperature },
+                    getMaxTokens = { settings.maxTokens },
+                    getSendSystemPrompt = { settings.sendSystemPrompt },
                     extraHeaders = mapOf(
                         "HTTP-Referer" to "https://eva.assistant.local",
                         "X-Title" to "EVA Virtual Assistant"
@@ -56,7 +62,10 @@ class AiRepository(
                     providerType = AiProviderType.CUSTOM_OPENAI,
                     getBaseUrl = { settings.customOpenAiUrl },
                     getApiKey = { keyStore.getKey(AiProviderType.CUSTOM_OPENAI) },
-                    getModel = { settings.customOpenAiModel }
+                    getModel = { settings.customOpenAiModel },
+                    getTemperature = { settings.temperature },
+                    getMaxTokens = { settings.maxTokens },
+                    getSendSystemPrompt = { settings.sendSystemPrompt }
                 )
             }
         }
@@ -64,12 +73,19 @@ class AiRepository(
 
     suspend fun executeAiRequest(
         messages: List<ChatMessage>,
-        toolsPrompt: String? = null
+        toolsPrompt: String? = null,
+        temperatureOverride: Float? = null,
+        maxTokensOverride: Int? = null
     ): AiResponse = withContext(Dispatchers.IO) {
         val settings = getSettings()
         val primaryProvider = getProvider(settings.activeProvider, settings)
 
-        val primaryResponse = primaryProvider.generateResponse(messages, toolsPrompt)
+        val primaryResponse = primaryProvider.generateResponse(
+            messages = messages,
+            toolsPrompt = toolsPrompt,
+            temperatureOverride = temperatureOverride,
+            maxTokensOverride = maxTokensOverride
+        )
         if (primaryResponse.isSuccess) {
             return@withContext primaryResponse
         }
@@ -77,7 +93,12 @@ class AiRepository(
         // If primary failed and fallback is enabled, try fallback
         if (settings.fallbackEnabled && settings.fallbackProvider != settings.activeProvider) {
             val fallbackProvider = getProvider(settings.fallbackProvider, settings)
-            val fallbackResponse = fallbackProvider.generateResponse(messages, toolsPrompt)
+            val fallbackResponse = fallbackProvider.generateResponse(
+                messages = messages,
+                toolsPrompt = toolsPrompt,
+                temperatureOverride = temperatureOverride,
+                maxTokensOverride = maxTokensOverride
+            )
             if (fallbackResponse.isSuccess) {
                 return@withContext fallbackResponse.copy(
                     content = "[Using ${settings.fallbackProvider.displayName} fallback]\n" + fallbackResponse.content
@@ -86,6 +107,16 @@ class AiRepository(
         }
 
         return@withContext primaryResponse
+    }
+
+    suspend fun fetchModels(type: AiProviderType): List<String> = withContext(Dispatchers.IO) {
+        val settings = getSettings()
+        val provider = getProvider(type, settings)
+        if (provider is OpenAiCompatibleProvider) {
+            provider.fetchAvailableModels()
+        } else {
+            listOf("gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash")
+        }
     }
 
     suspend fun testProvider(type: AiProviderType): ProviderTestResult = withContext(Dispatchers.IO) {

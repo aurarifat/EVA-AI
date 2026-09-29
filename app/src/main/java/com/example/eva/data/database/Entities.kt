@@ -59,3 +59,16 @@ data class FavoriteAppEntity(
     val launchCount: Int = 1,
     val isFavorite: Boolean = false
 )
+
+@Entity(tableName = "task_execution_traces")
+data class TaskExecutionTraceEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val taskId: String,
+    val userGoal: String,
+    val status: String, // "COMPLETED", "FAILED", "CANCELLED", "ABORTED_STUCK"
+    val startTime: Long,
+    val endTime: Long = System.currentTimeMillis(),
+    val totalSteps: Int,
+    val stepsTraceJson: String, // JSON array of step details
+    val finalSummary: String = ""
+)

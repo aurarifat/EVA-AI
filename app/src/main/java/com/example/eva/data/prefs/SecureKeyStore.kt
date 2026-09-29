@@ -89,6 +89,24 @@ class SecureKeyStore(private val context: Context) {
         prefs.edit().remove("key_${provider.name}").apply()
     }
 
+    fun setTelegramToken(token: String) {
+        val encrypted = encrypt(token.trim())
+        prefs.edit().putString("key_telegram_bot_token", encrypted).apply()
+    }
+
+    fun getTelegramToken(): String {
+        val enc = prefs.getString("key_telegram_bot_token", "") ?: ""
+        return decrypt(enc)
+    }
+
+    fun hasTelegramToken(): Boolean {
+        return getTelegramToken().isNotBlank()
+    }
+
+    fun clearTelegramToken() {
+        prefs.edit().remove("key_telegram_bot_token").apply()
+    }
+
     companion object {
         fun maskKey(key: String): String {
             if (key.isBlank()) return "Not configured"

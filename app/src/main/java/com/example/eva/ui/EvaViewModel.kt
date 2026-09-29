@@ -14,6 +14,7 @@ import com.example.eva.data.database.ConversationEntity
 import com.example.eva.data.database.CommandHistoryEntity
 import com.example.eva.data.database.EvaDatabase
 import com.example.eva.data.database.ScheduledTaskEntity
+import com.example.eva.data.database.TaskExecutionTraceEntity
 import com.example.eva.data.prefs.AiProviderType
 import com.example.eva.data.prefs.EvaPreferences
 import com.example.eva.data.prefs.EvaSettings
@@ -22,6 +23,7 @@ import com.example.eva.shizuku.*
 import com.example.eva.tools.*
 import com.example.eva.voice.EvaSpeechRecognizer
 import com.example.eva.voice.EvaTextToSpeech
+import com.example.eva.automation.ActiveAutomationBackendType
 import com.example.eva.voice.VoicePersonality
 import com.example.eva.voice.VoiceState
 import kotlinx.coroutines.flow.*
@@ -57,7 +59,8 @@ class EvaViewModel(application: Application) : AndroidViewModel(application) {
         pdfAssistant = pdfAssistant,
         shizukuManager = shizukuManager,
         adbCapabilityManager = adbCapabilityManager,
-        contextManager = contextManager
+        contextManager = contextManager,
+        preferences = preferences
     )
 
     val commandDispatcher = CommandDispatcher(
@@ -102,6 +105,12 @@ class EvaViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     val scheduledTasks: StateFlow<List<ScheduledTaskEntity>> = db.scheduledTaskDao().getTasks().stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5000),
+        emptyList()
+    )
+
+    val taskTraces: StateFlow<List<TaskExecutionTraceEntity>> = db.taskTraceDao().getAllTraces().stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5000),
         emptyList()
@@ -156,7 +165,16 @@ class EvaViewModel(application: Application) : AndroidViewModel(application) {
                 ConversationEntity(role = "user", content = command)
             )
 
-            val result = commandDispatcher.processCommand(command)
+            val result = commandDispatcher.processCommand(command) { stepDesc, status ->
+                db.conversationDao().insertMessage(
+                    ConversationEntity(
+                        role = "tool",
+                        content = stepDesc,
+                        toolName = "agent_step",
+                        toolStatus = status
+                    )
+                )
+            }
 
             // Save EVA response
             db.conversationDao().insertMessage(
@@ -189,6 +207,17 @@ class EvaViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 speechRecognizer.setState(VoiceState.IDLE)
             }
+        }
+    }
+
+    fun cancelCurrentTask() {
+        commandDispatcher.cancelActiveTask()
+        _statusBanner.value = "Active agent task cancelled."
+    }
+
+    fun clearTaskTraces() {
+        viewModelScope.launch {
+            db.taskTraceDao().clearAllTraces()
         }
     }
 
@@ -248,6 +277,48 @@ class EvaViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             preferences.updateVoiceSettings(speed, pitch, language, autoSpeak)
             _statusBanner.value = "Voice settings updated."
+        }
+    }
+
+    fun getActiveBackendType(): ActiveAutomationBackendType {
+        return toolRegistry.backendSelector.getActiveBackendType()
+    }
+
+    fun isAccessibilityActive(): Boolean {
+        return toolRegistry.backendSelector.accessibilityBackend.isAvailable()
+    }
+
+    fun isShizukuActive(): Boolean {
+        return toolRegistry.backendSelector.shizukuBackend.isAvailable()
+    }
+
+    fun setDebugTapCrosshair(enabled: Boolean) {
+        viewModelScope.launch {
+            preferences.setDebugTapCrosshair(enabled)
+            _statusBanner.value = if (enabled) "Debug tap crosshair enabled" else "Debug tap crosshair disabled"
+        }
+    }
+
+    fun updateAgentMode(enabled: Boolean) {
+        viewModelScope.launch {
+            preferences.setIsAgentMode(enabled)
+            _statusBanner.value = if (enabled) "Agent Mode enabled (autonomous execution)" else "Chat Mode enabled"
+        }
+    }
+
+    fun updateExecutionParams(
+        temperature: Float,
+        maxTokens: Int,
+        maxSteps: Int,
+        disableMaxSteps: Boolean,
+        screenCompression: Boolean,
+        sendSystemPrompt: Boolean
+    ) {
+        viewModelScope.launch {
+            preferences.updateModelParams(temperature, maxTokens, maxSteps, disableMaxSteps)
+            preferences.setUseScreenCompression(screenCompression)
+            preferences.setSendSystemPrompt(sendSystemPrompt)
+            _statusBanner.value = "Execution parameters saved."
         }
     }
 

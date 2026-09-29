@@ -42,7 +42,7 @@ class MainActivity : ComponentActivity() {
 
         fun isAutoToggleHomeEnabled(context: Context): Boolean {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            return prefs.getBoolean(KEY_AUTO_TOGGLE_HOME, true)
+            return prefs.getBoolean(KEY_AUTO_TOGGLE_HOME, false)
         }
 
         fun setAutoToggleHomeEnabled(context: Context, enabled: Boolean) {

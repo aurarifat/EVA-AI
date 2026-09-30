@@ -50,7 +50,14 @@ data class EvaSettings(
 
     // Phase 7: Telegram Integration
     val telegramEnabled: Boolean = false,
-    val telegramPairedChatId: Long? = null
+    val telegramPairedChatId: Long? = null,
+    val telegramPairedUsername: String? = null,
+
+    // Wake Word ("Hi EVA")
+    val wakeWordEnabled: Boolean = false,
+    val wakeWordSensitivity: Float = 0.6f,
+    val wakeWordChimeEnabled: Boolean = true,
+    val wakeWordHandsFreeSpeech: Boolean = true
 )
 
 class EvaPreferences(private val context: Context) {
@@ -86,6 +93,11 @@ class EvaPreferences(private val context: Context) {
         val SEND_SYSTEM_PROMPT = booleanPreferencesKey("send_system_prompt")
         val TELEGRAM_ENABLED = booleanPreferencesKey("telegram_enabled")
         val TELEGRAM_PAIRED_CHAT_ID = longPreferencesKey("telegram_paired_chat_id")
+        val TELEGRAM_PAIRED_USERNAME = stringPreferencesKey("telegram_paired_username")
+        val WAKE_WORD_ENABLED = booleanPreferencesKey("wake_word_enabled")
+        val WAKE_WORD_SENSITIVITY = floatPreferencesKey("wake_word_sensitivity")
+        val WAKE_WORD_CHIME_ENABLED = booleanPreferencesKey("wake_word_chime_enabled")
+        val WAKE_WORD_HANDS_FREE_SPEECH = booleanPreferencesKey("wake_word_hands_free_speech")
     }
 
     val settingsFlow: Flow<EvaSettings> = context.dataStore.data.map { prefs ->
@@ -123,7 +135,12 @@ class EvaPreferences(private val context: Context) {
             useScreenCompression = prefs[Keys.USE_SCREEN_COMPRESSION] ?: true,
             sendSystemPrompt = prefs[Keys.SEND_SYSTEM_PROMPT] ?: true,
             telegramEnabled = prefs[Keys.TELEGRAM_ENABLED] ?: false,
-            telegramPairedChatId = prefs[Keys.TELEGRAM_PAIRED_CHAT_ID]
+            telegramPairedChatId = prefs[Keys.TELEGRAM_PAIRED_CHAT_ID],
+            telegramPairedUsername = prefs[Keys.TELEGRAM_PAIRED_USERNAME],
+            wakeWordEnabled = prefs[Keys.WAKE_WORD_ENABLED] ?: false,
+            wakeWordSensitivity = prefs[Keys.WAKE_WORD_SENSITIVITY] ?: 0.6f,
+            wakeWordChimeEnabled = prefs[Keys.WAKE_WORD_CHIME_ENABLED] ?: true,
+            wakeWordHandsFreeSpeech = prefs[Keys.WAKE_WORD_HANDS_FREE_SPEECH] ?: true
         )
     }
 
@@ -217,5 +234,44 @@ class EvaPreferences(private val context: Context) {
                 it[Keys.TELEGRAM_PAIRED_CHAT_ID] = chatId
             }
         }
+    }
+
+    suspend fun setTelegramPairedUser(chatId: Long?, username: String?) {
+        context.dataStore.edit {
+            if (chatId == null) {
+                it.remove(Keys.TELEGRAM_PAIRED_CHAT_ID)
+                it.remove(Keys.TELEGRAM_PAIRED_USERNAME)
+            } else {
+                it[Keys.TELEGRAM_PAIRED_CHAT_ID] = chatId
+                if (!username.isNullOrBlank()) {
+                    it[Keys.TELEGRAM_PAIRED_USERNAME] = username
+                } else {
+                    it.remove(Keys.TELEGRAM_PAIRED_USERNAME)
+                }
+            }
+        }
+    }
+
+    suspend fun clearTelegramPairing() {
+        context.dataStore.edit {
+            it.remove(Keys.TELEGRAM_PAIRED_CHAT_ID)
+            it.remove(Keys.TELEGRAM_PAIRED_USERNAME)
+        }
+    }
+
+    suspend fun setWakeWordEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.WAKE_WORD_ENABLED] = enabled }
+    }
+
+    suspend fun setWakeWordSensitivity(sensitivity: Float) {
+        context.dataStore.edit { it[Keys.WAKE_WORD_SENSITIVITY] = sensitivity.coerceIn(0.1f, 1.0f) }
+    }
+
+    suspend fun setWakeWordChimeEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.WAKE_WORD_CHIME_ENABLED] = enabled }
+    }
+
+    suspend fun setWakeWordHandsFreeSpeech(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.WAKE_WORD_HANDS_FREE_SPEECH] = enabled }
     }
 }

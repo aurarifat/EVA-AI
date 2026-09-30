@@ -28,6 +28,7 @@ import androidx.navigation.compose.rememberNavController
 import com.example.eva.overlay.EvaOverlayService
 import com.example.eva.ui.EvaViewModel
 import com.example.eva.ui.screens.*
+import com.example.eva.voice.WakeWordDetectionService
 import com.example.ui.theme.EvaObsidian
 import com.example.ui.theme.EvaSurface
 import com.example.ui.theme.EvaYellowPrimary
@@ -263,12 +264,21 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleLaunchIntent(intent: Intent?) {
-        val manualOpen = intent?.getBooleanExtra(EXTRA_MANUAL_OPEN, false) ?: false
-        val autoToggle = isAutoToggleHomeEnabled(this)
+        val triggeredFromWake = intent?.getBooleanExtra(WakeWordDetectionService.EXTRA_TRIGGERED_FROM_WAKE, false) ?: false
+        if (triggeredFromWake) {
+            val s = viewModel.settingsState.value
+            viewModel.speechRecognizer.startListening(
+                language = s.voiceLanguage,
+                onResult = { spoken ->
+                    viewModel.processCommand(spoken)
+                },
+                onError = { /* handled gracefully */ }
+            )
+        }
 
-        if (autoToggle && !manualOpen && EvaOverlayService.isOverlayPermissionGranted(this)) {
+        val autoToggle = isAutoToggleHomeEnabled(this)
+        if (autoToggle && EvaOverlayService.isOverlayPermissionGranted(this)) {
             EvaOverlayService.startOverlay(this)
-            toggleToHomeScreen(this)
         }
     }
 }

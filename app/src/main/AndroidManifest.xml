@@ -16,6 +16,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
     <uses-permission android:name="android.permission.WRITE_SETTINGS"
         tools:ignore="ProtectedPermissions" />
@@ -90,6 +91,26 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Floating assistive assistant overlay and voice control" />
+        </service>
+
+        <!-- Local Wake-Word Detection Service for hands-free 'Hi EVA' -->
+        <service
+            android:name="com.example.eva.voice.WakeWordDetectionService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse|microphone">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Local wake word detection and hands-free voice control" />
+        </service>
+
+        <!-- Telegram Bot Remote Service -->
+        <service
+            android:name="com.example.eva.telegram.TelegramBotService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Telegram bot remote control service for AI assistant" />
         </service>
 
         <!-- Native Accessibility Service for Screen Reading and Precision Gestures -->

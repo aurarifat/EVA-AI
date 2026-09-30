@@ -20,11 +20,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.eva.automation.ActiveAutomationBackendType
 import com.example.eva.data.prefs.AiProviderType
 import com.example.eva.data.prefs.SecureKeyStore
+import com.example.eva.overlay.EvaOverlayService
+import com.example.eva.telegram.TelegramBotInfo
+import com.example.eva.telegram.TelegramBotStatus
 import com.example.eva.ui.EvaViewModel
 import com.example.eva.ui.components.EvaGlassCard
 import com.example.ui.theme.*
@@ -56,6 +60,10 @@ fun SettingsScreen(
     var voicePitch by remember(settings.voicePitch) { mutableFloatStateOf(settings.voicePitch) }
     var voiceLang by remember(settings.voiceLanguage) { mutableStateOf(settings.voiceLanguage) }
     var autoSpeak by remember(settings.autoSpeak) { mutableStateOf(settings.autoSpeak) }
+    var wakeWordEnabled by remember(settings.wakeWordEnabled) { mutableStateOf(settings.wakeWordEnabled) }
+    var wakeWordSensitivity by remember(settings.wakeWordSensitivity) { mutableFloatStateOf(settings.wakeWordSensitivity) }
+    var wakeWordChimeEnabled by remember(settings.wakeWordChimeEnabled) { mutableStateOf(settings.wakeWordChimeEnabled) }
+    var wakeWordHandsFreeSpeech by remember(settings.wakeWordHandsFreeSpeech) { mutableStateOf(settings.wakeWordHandsFreeSpeech) }
 
     var debugTapCrosshair by remember(settings.debugTapCrosshair) { mutableStateOf(settings.debugTapCrosshair) }
     var isAgentMode by remember(settings.isAgentMode) { mutableStateOf(settings.isAgentMode) }
@@ -65,6 +73,14 @@ fun SettingsScreen(
     var useScreenCompression by remember(settings.useScreenCompression) { mutableStateOf(settings.useScreenCompression) }
     var sendSystemPrompt by remember(settings.sendSystemPrompt) { mutableStateOf(settings.sendSystemPrompt) }
     val taskTraces by viewModel.taskTraces.collectAsState()
+
+    var telegramEnabled by remember(settings.telegramEnabled) { mutableStateOf(settings.telegramEnabled) }
+    var telegramToken by remember { mutableStateOf(viewModel.keyStore.getTelegramToken()) }
+    var telegramTokenVisible by remember { mutableStateOf(false) }
+    var isTestingTelegram by remember { mutableStateOf(false) }
+    var telegramTestResultText by remember { mutableStateOf<String?>(null) }
+    val telegramBotStatus by viewModel.telegramBotStatus.collectAsState()
+    val telegramBotInfo by viewModel.telegramBotInfo.collectAsState()
 
     Scaffold(
         topBar = {
@@ -304,7 +320,125 @@ fun SettingsScreen(
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Local Wake-Word Model (Hi EVA) Section
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp), color = Color(0x22FFFFFF))
+                    Text("LOCAL WAKE-WORD MODEL", color = EvaYellowGold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Hands-Free Voice Wake ('Hi EVA')", color = EvaTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            Text("Continuous on-device acoustic model triggers voice listening anywhere.", color = EvaTextSecondary, fontSize = 11.sp)
+                        }
+                        Switch(
+                            checked = wakeWordEnabled,
+                            onCheckedChange = { enabled ->
+                                wakeWordEnabled = enabled
+                                viewModel.setWakeWordEnabled(enabled)
+                                if (enabled) {
+                                    Toast.makeText(context, "Local wake-word model active: Say 'Hi EVA'", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(context, "Wake-word model stopped", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            colors = SwitchDefaults.colors(checkedThumbColor = EvaYellowPrimary, checkedTrackColor = Color(0xFF2A2312))
+                        )
+                    }
+
+                    if (wakeWordEnabled) {
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Sensitivity Control
+                        val sensitivityLabel = when {
+                            wakeWordSensitivity < 0.45f -> "Low (Fewer false alarms)"
+                            wakeWordSensitivity > 0.70f -> "High (Fastest response)"
+                            else -> "Balanced (Recommended)"
+                        }
+                        Text("Model Sensitivity: $sensitivityLabel (${(wakeWordSensitivity * 100).toInt()}%)", color = EvaTextPrimary, fontSize = 12.sp)
+                        Slider(
+                            value = wakeWordSensitivity,
+                            onValueChange = {
+                                wakeWordSensitivity = it
+                                viewModel.setWakeWordSensitivity(it)
+                            },
+                            valueRange = 0.3f..0.85f,
+                            colors = SliderDefaults.colors(thumbColor = EvaYellowPrimary, activeTrackColor = EvaYellowPrimary)
+                        )
+
+                        // Chime Toggle
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Auditory chime cue on trigger", color = EvaTextPrimary, fontSize = 12.sp)
+                            Switch(
+                                checked = wakeWordChimeEnabled,
+                                onCheckedChange = {
+                                    wakeWordChimeEnabled = it
+                                    viewModel.setWakeWordChimeEnabled(it)
+                                },
+                                colors = SwitchDefaults.colors(checkedThumbColor = EvaYellowPrimary, checkedTrackColor = Color(0xFF2A2312))
+                            )
+                        }
+
+                        // Hands-Free Voice Greeting Toggle
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Speak ready greeting", color = EvaTextPrimary, fontSize = 12.sp)
+                                Text("EVA speaks warm prompt and immediately listens", color = EvaTextSecondary, fontSize = 10.sp)
+                            }
+                            Switch(
+                                checked = wakeWordHandsFreeSpeech,
+                                onCheckedChange = {
+                                    wakeWordHandsFreeSpeech = it
+                                    viewModel.setWakeWordHandsFreeSpeech(it)
+                                },
+                                colors = SwitchDefaults.colors(checkedThumbColor = EvaYellowPrimary, checkedTrackColor = Color(0xFF2A2312))
+                            )
+                        }
+                    }
+
+                    // Wake Word Status Indicator
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (wakeWordEnabled) EvaSuccessGreen.copy(alpha = 0.15f) else EvaSurfaceElevated,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, if (wakeWordEnabled) EvaSuccessGreen.copy(alpha = 0.4f) else Color(0x22FFFFFF)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                if (wakeWordEnabled) Icons.Default.Mic else Icons.Default.MicOff,
+                                contentDescription = null,
+                                tint = if (wakeWordEnabled) EvaSuccessGreen else EvaTextTertiary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = if (wakeWordEnabled) "Local Model Active • Listening for 'Hi EVA' • 100% Offline" else "Wake word detection is currently turned off",
+                                color = if (wakeWordEnabled) EvaSuccessGreen else EvaTextTertiary,
+                                fontSize = 11.sp,
+                                fontWeight = if (wakeWordEnabled) FontWeight.SemiBold else FontWeight.Normal
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
                     Button(
                         onClick = {
                             viewModel.updateVoiceConfig(voiceSpeed, voicePitch, voiceLang, autoSpeak)
@@ -313,6 +447,395 @@ fun SettingsScreen(
                         colors = ButtonDefaults.buttonColors(containerColor = EvaYellowPrimary, contentColor = Color(0xFF090A0E))
                     ) {
                         Text("Save Voice Settings")
+                    }
+                }
+            }
+
+            // Personality & Tone Card (Read-only explanation)
+            EvaGlassCard(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("EVA PERSONALITY & TONE", color = EvaYellowGold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = EvaYellowPrimary.copy(alpha = 0.15f),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, EvaYellowPrimary.copy(alpha = 0.3f))
+                        ) {
+                            Text(
+                                text = "Warm & Sweet 💛",
+                                color = EvaYellowPrimary,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "EVA replies warmly, sweetly, and concisely by default — like a caring close friend, never stiff or corporate. Confirmation phrases are short and affectionate (e.g. \"Done! 💛\", \"All set for you.\").",
+                        color = EvaTextSecondary,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp
+                    )
+                }
+            }
+
+            // Telegram Bot Remote Control Card (Strict single-user ownership)
+            EvaGlassCard(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Send,
+                                contentDescription = null,
+                                tint = EvaYellowPrimary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "TELEGRAM BOT REMOTE CONTROL",
+                                color = EvaYellowGold,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        // Bot Status Pill
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = when (telegramBotStatus) {
+                                is TelegramBotStatus.Running -> EvaSuccessGreen.copy(alpha = 0.2f)
+                                is TelegramBotStatus.Connecting -> EvaYellowPrimary.copy(alpha = 0.2f)
+                                is TelegramBotStatus.Error -> EvaErrorRed.copy(alpha = 0.2f)
+                                is TelegramBotStatus.Disconnected -> Color(0x33FFFFFF)
+                            }
+                        ) {
+                            Text(
+                                text = when (telegramBotStatus) {
+                                    is TelegramBotStatus.Running -> "● Online"
+                                    is TelegramBotStatus.Connecting -> "● Connecting..."
+                                    is TelegramBotStatus.Error -> "● Error"
+                                    is TelegramBotStatus.Disconnected -> "○ Offline"
+                                },
+                                color = when (telegramBotStatus) {
+                                    is TelegramBotStatus.Running -> EvaSuccessGreen
+                                    is TelegramBotStatus.Connecting -> EvaYellowPrimary
+                                    is TelegramBotStatus.Error -> EvaErrorRed
+                                    is TelegramBotStatus.Disconnected -> EvaTextTertiary
+                                },
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Control EVA from anywhere via Telegram with single-owner security. Only the first registered user is authorized to send tasks and commands.",
+                        color = EvaTextSecondary,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // BotFather Setup Guide
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0x15FFFFFF),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x22FFFFFF)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Text(
+                                text = "Setup with @BotFather:",
+                                color = EvaYellowGold,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "1. Open Telegram and search for @BotFather\n2. Send /newbot and choose a bot name & username\n3. Copy the HTTP API token (secret private code) and paste below",
+                                color = EvaTextTertiary,
+                                fontSize = 11.sp,
+                                lineHeight = 16.sp
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Token Input
+                    OutlinedTextField(
+                        value = telegramToken,
+                        onValueChange = {
+                            telegramToken = it
+                            telegramTestResultText = null
+                        },
+                        label = { Text("BotFather Secret Private Code (Token)", fontSize = 12.sp) },
+                        placeholder = { Text("123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ", fontSize = 12.sp) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        visualTransformation = if (telegramTokenVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            Row {
+                                IconButton(onClick = { telegramTokenVisible = !telegramTokenVisible }) {
+                                    Icon(
+                                        imageVector = if (telegramTokenVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                        contentDescription = "Toggle visibility",
+                                        tint = EvaTextTertiary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                if (telegramToken.isNotBlank()) {
+                                    IconButton(onClick = {
+                                        telegramToken = ""
+                                        viewModel.clearTelegramToken()
+                                        Toast.makeText(context, "Telegram token cleared", Toast.LENGTH_SHORT).show()
+                                    }) {
+                                        Icon(
+                                            imageVector = Icons.Default.Clear,
+                                            contentDescription = "Clear",
+                                            tint = EvaTextTertiary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = EvaYellowPrimary,
+                            unfocusedBorderColor = Color(0x33FFFFFF),
+                            focusedLabelColor = EvaYellowPrimary,
+                            unfocusedLabelColor = EvaTextTertiary,
+                            focusedTextColor = EvaTextPrimary,
+                            unfocusedTextColor = EvaTextPrimary
+                        )
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Token Actions (Save & Test)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                if (telegramToken.isBlank()) {
+                                    Toast.makeText(context, "Please enter a BotFather token", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    viewModel.saveTelegramToken(telegramToken)
+                                    Toast.makeText(context, "Telegram token saved securely", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = EvaYellowPrimary, contentColor = Color(0xFF090A0E)),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Save Token", fontSize = 12.sp)
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                if (telegramToken.isBlank()) {
+                                    Toast.makeText(context, "Enter token first to test", Toast.LENGTH_SHORT).show()
+                                    return@OutlinedButton
+                                }
+                                isTestingTelegram = true
+                                telegramTestResultText = null
+                                viewModel.testTelegramToken(telegramToken) { result ->
+                                    isTestingTelegram = false
+                                    result.onSuccess { bot ->
+                                        telegramTestResultText = "Connected as @${bot.username} (${bot.firstName})"
+                                    }.onFailure { ex ->
+                                        telegramTestResultText = "Error: ${ex.message ?: "Failed to connect"}"
+                                    }
+                                }
+                            },
+                            enabled = !isTestingTelegram,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, EvaYellowPrimary),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = EvaYellowPrimary),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            if (isTestingTelegram) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp),
+                                    strokeWidth = 2.dp,
+                                    color = EvaYellowPrimary
+                                )
+                            } else {
+                                Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Test Connection", fontSize = 12.sp)
+                        }
+                    }
+
+                    // Test result banner
+                    telegramTestResultText?.let { resultMsg ->
+                        Spacer(modifier = Modifier.height(10.dp))
+                        val isSuccess = !resultMsg.startsWith("Error:")
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = if (isSuccess) EvaSuccessGreen.copy(alpha = 0.15f) else EvaErrorRed.copy(alpha = 0.15f),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, if (isSuccess) EvaSuccessGreen.copy(alpha = 0.4f) else EvaErrorRed.copy(alpha = 0.4f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = resultMsg,
+                                color = if (isSuccess) EvaSuccessGreen else EvaErrorRed,
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Enable Telegram Service Switch
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Enable Telegram Bot Remote", color = EvaTextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Runs background service to listen and respond to owner commands", color = EvaTextTertiary, fontSize = 11.sp)
+                        }
+                        Switch(
+                            checked = telegramEnabled,
+                            onCheckedChange = { enabled ->
+                                if (enabled && telegramToken.isBlank()) {
+                                    Toast.makeText(context, "Please enter your BotFather token first", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    telegramEnabled = enabled
+                                    viewModel.setTelegramEnabled(enabled)
+                                    Toast.makeText(context, if (enabled) "Telegram Bot service started" else "Telegram Bot service stopped", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color(0xFF090A0E),
+                                checkedTrackColor = EvaYellowPrimary,
+                                uncheckedThumbColor = EvaTextTertiary,
+                                uncheckedTrackColor = Color(0x33FFFFFF)
+                            )
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // =========================================================
+                    // "ALLOW ONLY FIRST USER" SECURITY STATUS CARD
+                    // =========================================================
+                    val isPaired = settings.telegramPairedChatId != null
+
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (isPaired) EvaSuccessGreen.copy(alpha = 0.10f) else Color(0x18FFFFFF),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (isPaired) EvaSuccessGreen.copy(alpha = 0.4f) else EvaYellowGold.copy(alpha = 0.35f)
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = if (isPaired) Icons.Default.Lock else Icons.Default.HourglassTop,
+                                        contentDescription = null,
+                                        tint = if (isPaired) EvaSuccessGreen else EvaYellowGold,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = if (isPaired) "EXCLUSIVE OWNER PAIRED" else "WAITING FOR FIRST USER",
+                                        color = if (isPaired) EvaSuccessGreen else EvaYellowGold,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = if (isPaired) EvaSuccessGreen.copy(alpha = 0.2f) else EvaYellowGold.copy(alpha = 0.2f)
+                                ) {
+                                    Text(
+                                        text = if (isPaired) "Locked" else "First-User Only",
+                                        color = if (isPaired) EvaSuccessGreen else EvaYellowGold,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            if (isPaired) {
+                                Text(
+                                    text = "Paired Owner: ${settings.telegramPairedUsername ?: "Authorized User"}",
+                                    color = EvaTextPrimary,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "Chat ID: ${settings.telegramPairedChatId}",
+                                    color = EvaTextTertiary,
+                                    fontSize = 11.sp
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "🔒 Single-User Policy Enforced: All messages from any other Telegram user will be immediately rejected with an Access Denied notice.",
+                                    color = EvaTextSecondary,
+                                    fontSize = 11.sp,
+                                    lineHeight = 15.sp
+                                )
+
+                                Spacer(modifier = Modifier.height(10.dp))
+                                OutlinedButton(
+                                    onClick = {
+                                        viewModel.unpairTelegramOwner()
+                                        Toast.makeText(context, "Owner unpaired. Next user will become the owner.", Toast.LENGTH_SHORT).show()
+                                    },
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, EvaErrorRed.copy(alpha = 0.6f)),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = EvaErrorRed),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(Icons.Default.LockOpen, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Unpair Owner / Allow New User", fontSize = 12.sp)
+                                }
+                            } else {
+                                Text(
+                                    text = "No user has paired yet. To claim ownership:",
+                                    color = EvaTextSecondary,
+                                    fontSize = 12.sp
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "1. Open Telegram & search for your bot\n2. Send /start or any message\n3. You will automatically be registered as the sole, exclusive owner of this EVA assistant.",
+                                    color = EvaTextTertiary,
+                                    fontSize = 11.sp,
+                                    lineHeight = 16.sp
+                                )
+                            }
+                        }
                     }
                 }
             }

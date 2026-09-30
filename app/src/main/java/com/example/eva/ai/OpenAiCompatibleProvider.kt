@@ -108,7 +108,7 @@ class OpenAiCompatibleProvider(
             val cleanContent = cleanContentOfToolJson(content)
 
             AiResponse(
-                content = cleanContent.ifBlank { "Done." },
+                content = cleanContent.ifBlank { "Done! 💛" },
                 toolCall = toolCall,
                 providerUsed = providerType,
                 latencyMs = latency,
@@ -226,7 +226,7 @@ class OpenAiCompatibleProvider(
             val cleanContent = cleanContentOfToolJson(fullContent)
 
             AiResponse(
-                content = cleanContent.ifBlank { "Done." },
+                content = cleanContent.ifBlank { "Done! 💛" },
                 toolCall = toolCall,
                 providerUsed = providerType,
                 latencyMs = System.currentTimeMillis() - startTime,

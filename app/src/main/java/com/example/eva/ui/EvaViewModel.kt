@@ -24,8 +24,16 @@ import com.example.eva.tools.*
 import com.example.eva.voice.EvaSpeechRecognizer
 import com.example.eva.voice.EvaTextToSpeech
 import com.example.eva.automation.ActiveAutomationBackendType
+import com.example.eva.overlay.EvaOverlayService
 import com.example.eva.voice.VoicePersonality
 import com.example.eva.voice.VoiceState
+import com.example.eva.voice.WakeWordFeedback
+import com.example.eva.voice.WakeWordListener
+import com.example.eva.voice.WakeWordDetectionService
+import com.example.eva.telegram.TelegramBotInfo
+import com.example.eva.telegram.TelegramBotManager
+import com.example.eva.telegram.TelegramBotService
+import com.example.eva.telegram.TelegramBotStatus
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.Calendar
@@ -119,17 +127,171 @@ class EvaViewModel(application: Application) : AndroidViewModel(application) {
     private val _providerTestResult = MutableStateFlow<ProviderTestResult?>(null)
     val providerTestResult: StateFlow<ProviderTestResult?> = _providerTestResult.asStateFlow()
 
+    val telegramBotManager: TelegramBotManager = TelegramBotManager.getInstance(
+        context = application,
+        preferences = preferences,
+        keyStore = keyStore,
+        commandDispatcher = commandDispatcher
+    )
+    val telegramBotStatus: StateFlow<TelegramBotStatus> = telegramBotManager.botStatus
+    val telegramBotInfo: StateFlow<TelegramBotInfo?> = telegramBotManager.botInfo
+
     private val _statusBanner = MutableStateFlow<String?>(null)
     val statusBanner: StateFlow<String?> = _statusBanner.asStateFlow()
 
+    private var inAppWakeWordListener: WakeWordListener? = null
+
     init {
-        // Observe settings changes to reconfigure TTS
+        // Observe settings changes to reconfigure TTS and manage in-app wake word & Telegram service
         viewModelScope.launch {
             settingsState.collect { s ->
                 tts.configure(s.voiceSpeed, s.voicePitch, s.voiceLanguage)
+                if (s.wakeWordEnabled && EvaOverlayService.activeInstance == null) {
+                    startInAppWakeWordListener()
+                } else if (!s.wakeWordEnabled || EvaOverlayService.activeInstance != null) {
+                    stopInAppWakeWordListener()
+                }
+
+                if (s.telegramEnabled && keyStore.hasTelegramToken()) {
+                    TelegramBotService.startService(application)
+                } else if (!s.telegramEnabled) {
+                    TelegramBotService.stopService(application)
+                }
             }
         }
         shizukuManager.checkStatus()
+    }
+
+    private fun startInAppWakeWordListener() {
+        if (inAppWakeWordListener == null) {
+            inAppWakeWordListener = WakeWordListener(
+                context = getApplication(),
+                onWakeWordDetected = {
+                    handleInAppWakeWordTriggered()
+                }
+            )
+        }
+        inAppWakeWordListener?.startListening()
+    }
+
+    private fun stopInAppWakeWordListener() {
+        inAppWakeWordListener?.stopListening()
+        inAppWakeWordListener = null
+    }
+
+    private fun handleInAppWakeWordTriggered() {
+        inAppWakeWordListener?.pauseListening()
+        val s = settingsState.value
+        WakeWordFeedback.triggerHaptic(getApplication())
+        if (s.wakeWordChimeEnabled) {
+            WakeWordFeedback.playChime(getApplication())
+        }
+        _statusBanner.value = "Hi! 💛 Listening for command..."
+
+        if (s.wakeWordHandsFreeSpeech) {
+            val readyPhrase = VoicePersonality.getWakeWordReadyPhrase()
+            tts.speak(readyPhrase) {
+                startVoiceListeningForCommand()
+            }
+        } else {
+            startVoiceListeningForCommand()
+        }
+    }
+
+    private fun startVoiceListeningForCommand() {
+        viewModelScope.launch {
+            val s = settingsState.value
+            speechRecognizer.startListening(
+                language = s.voiceLanguage,
+                onResult = { spoken ->
+                    processCommand(spoken)
+                    if (s.wakeWordEnabled && EvaOverlayService.activeInstance == null) {
+                        inAppWakeWordListener?.resumeListening()
+                    }
+                },
+                onError = {
+                    _statusBanner.value = null
+                    if (s.wakeWordEnabled && EvaOverlayService.activeInstance == null) {
+                        inAppWakeWordListener?.resumeListening()
+                    }
+                }
+            )
+        }
+    }
+
+    fun setWakeWordEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            preferences.setWakeWordEnabled(enabled)
+            val app = getApplication<Application>()
+            if (enabled) {
+                if (EvaOverlayService.activeInstance == null) {
+                    WakeWordDetectionService.startService(app)
+                }
+            } else {
+                WakeWordDetectionService.stopService(app)
+            }
+        }
+    }
+
+    fun setWakeWordSensitivity(sensitivity: Float) {
+        viewModelScope.launch {
+            preferences.setWakeWordSensitivity(sensitivity)
+            inAppWakeWordListener?.updateSensitivity(sensitivity)
+        }
+    }
+
+    fun setWakeWordChimeEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            preferences.setWakeWordChimeEnabled(enabled)
+        }
+    }
+
+    fun setWakeWordHandsFreeSpeech(enabled: Boolean) {
+        viewModelScope.launch {
+            preferences.setWakeWordHandsFreeSpeech(enabled)
+        }
+    }
+
+    // Telegram Bot Remote Integration
+    fun setTelegramEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            preferences.setTelegramEnabled(enabled)
+            val app = getApplication<Application>()
+            if (enabled) {
+                TelegramBotService.startService(app)
+            } else {
+                TelegramBotService.stopService(app)
+            }
+        }
+    }
+
+    fun saveTelegramToken(token: String) {
+        keyStore.setTelegramToken(token.trim())
+        viewModelScope.launch {
+            val settings = settingsState.value
+            if (settings.telegramEnabled) {
+                TelegramBotService.startService(getApplication())
+            }
+        }
+    }
+
+    fun clearTelegramToken() {
+        keyStore.clearTelegramToken()
+        telegramBotManager.stopBot()
+        TelegramBotService.stopService(getApplication())
+    }
+
+    fun unpairTelegramOwner() {
+        viewModelScope.launch {
+            telegramBotManager.unpairOwner()
+        }
+    }
+
+    fun testTelegramToken(token: String, onResult: (Result<TelegramBotInfo>) -> Unit) {
+        viewModelScope.launch {
+            val result = telegramBotManager.testToken(token)
+            onResult(result)
+        }
     }
 
     fun startListening() {
@@ -399,6 +561,7 @@ class EvaViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
+        stopInAppWakeWordListener()
         speechRecognizer.stopListening()
         tts.shutdown()
         shizukuManager.cleanup()

@@ -20,5 +20,6 @@ data class BubbleOverlayUiState(
     val rmsLevel: Float = 0f,
     val isExpanded: Boolean = false,
     val isProcessing: Boolean = false,
-    val isShizukuActive: Boolean = false
+    val isShizukuActive: Boolean = false,
+    val isWakeWordHighlight: Boolean = false
 )

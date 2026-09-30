@@ -62,7 +62,7 @@ data class ScreenshotResult(
  * Dynamic runtime resolution without hardcoded 1080x2400 assumptions.
  */
 class ScreenGeometryManager(private val context: Context) {
-    private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+    private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
     private var cachedWidth: Int = 0
     private var cachedHeight: Int = 0
     private var lastRotation: Int = -1
@@ -79,29 +79,45 @@ class ScreenGeometryManager(private val context: Context) {
 
     @Synchronized
     fun refreshDimensions(): Pair<Int, Int> {
-        val currentRotation = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            context.display?.rotation ?: Surface.ROTATION_0
-        } else {
-            @Suppress("DEPRECATION")
-            windowManager.defaultDisplay.rotation
+        val currentRotation = try {
+            val dm = context.getSystemService(Context.DISPLAY_SERVICE) as? android.hardware.display.DisplayManager
+            val display = dm?.getDisplay(android.view.Display.DEFAULT_DISPLAY)
+            display?.rotation ?: Surface.ROTATION_0
+        } catch (_: Throwable) {
+            Surface.ROTATION_0
         }
 
         if (cachedWidth > 0 && cachedHeight > 0 && currentRotation == lastRotation) {
             return Pair(cachedWidth, cachedHeight)
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val bounds = windowManager.currentWindowMetrics.bounds
-            cachedWidth = bounds.width().coerceAtLeast(1)
-            cachedHeight = bounds.height().coerceAtLeast(1)
-        } else {
-            val dm = DisplayMetrics()
-            @Suppress("DEPRECATION")
-            windowManager.defaultDisplay.getRealMetrics(dm)
-            cachedWidth = dm.widthPixels.coerceAtLeast(1)
-            cachedHeight = dm.heightPixels.coerceAtLeast(1)
+        var resolvedWidth = 0
+        var resolvedHeight = 0
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && windowManager != null) {
+                val bounds = windowManager.currentWindowMetrics.bounds
+                resolvedWidth = bounds.width().coerceAtLeast(1)
+                resolvedHeight = bounds.height().coerceAtLeast(1)
+            } else if (windowManager != null) {
+                val dm = DisplayMetrics()
+                @Suppress("DEPRECATION")
+                windowManager.defaultDisplay.getRealMetrics(dm)
+                resolvedWidth = dm.widthPixels.coerceAtLeast(1)
+                resolvedHeight = dm.heightPixels.coerceAtLeast(1)
+            }
+        } catch (_: Throwable) {
+            // Fallback gracefully below
         }
 
+        if (resolvedWidth <= 0 || resolvedHeight <= 0) {
+            val dm = context.resources.displayMetrics
+            resolvedWidth = dm.widthPixels.coerceAtLeast(1)
+            resolvedHeight = dm.heightPixels.coerceAtLeast(1)
+        }
+
+        cachedWidth = resolvedWidth
+        cachedHeight = resolvedHeight
         lastRotation = currentRotation
         Log.d("ScreenGeometryManager", "Refreshed dimensions: ${cachedWidth}x${cachedHeight}, rotation: $currentRotation")
         return Pair(cachedWidth, cachedHeight)

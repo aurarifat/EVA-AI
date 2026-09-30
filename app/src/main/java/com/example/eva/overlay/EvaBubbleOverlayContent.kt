@@ -114,17 +114,19 @@ fun EvaBubbleOverlayContent(
     // Dynamic pulse for bubble
     val pulseScale by infiniteTransition.animateFloat(
         initialValue = 1f,
-        targetValue = when (state.mode) {
-            BubbleMode.LISTENING -> 1.14f
-            BubbleMode.SPEAKING -> 1.08f
-            BubbleMode.IDLE -> 1.02f
+        targetValue = when {
+            state.isWakeWordHighlight -> 1.20f
+            state.mode == BubbleMode.LISTENING -> 1.14f
+            state.mode == BubbleMode.SPEAKING -> 1.08f
+            else -> 1.02f
         },
         animationSpec = infiniteRepeatable(
             animation = tween(
-                durationMillis = when (state.mode) {
-                    BubbleMode.LISTENING -> 500
-                    BubbleMode.SPEAKING -> 800
-                    BubbleMode.IDLE -> 2000
+                durationMillis = when {
+                    state.isWakeWordHighlight -> 350
+                    state.mode == BubbleMode.LISTENING -> 500
+                    state.mode == BubbleMode.SPEAKING -> 800
+                    else -> 2000
                 },
                 easing = FastOutSlowInEasing
             ),
@@ -205,10 +207,11 @@ fun EvaBubbleOverlayContent(
                         .fillMaxSize()
                         .clip(CircleShape)
                         .background(
-                            when (state.mode) {
-                                BubbleMode.LISTENING -> CyanListening.copy(alpha = glowAlpha * 0.45f)
-                                BubbleMode.SPEAKING -> EmeraldSpeaking.copy(alpha = glowAlpha * 0.40f)
-                                BubbleMode.IDLE -> GoldAccent.copy(alpha = glowAlpha * 0.25f)
+                            when {
+                                state.isWakeWordHighlight -> GoldAccent.copy(alpha = 0.90f)
+                                state.mode == BubbleMode.LISTENING -> CyanListening.copy(alpha = glowAlpha * 0.45f)
+                                state.mode == BubbleMode.SPEAKING -> EmeraldSpeaking.copy(alpha = glowAlpha * 0.40f)
+                                else -> GoldAccent.copy(alpha = glowAlpha * 0.25f)
                             }
                         )
                 )
@@ -221,12 +224,13 @@ fun EvaBubbleOverlayContent(
                         .clip(CircleShape)
                         .background(BubbleObsidian)
                         .border(
-                            width = 2.dp,
+                            width = if (state.isWakeWordHighlight) 3.dp else 2.dp,
                             brush = Brush.sweepGradient(
-                                colors = when (state.mode) {
-                                    BubbleMode.LISTENING -> listOf(CyanListening, Color.White, CyanListening)
-                                    BubbleMode.SPEAKING -> listOf(EmeraldSpeaking, CyanListening, EmeraldSpeaking)
-                                    BubbleMode.IDLE -> listOf(GoldAccent, Color.White, GoldBorder, GoldAccent)
+                                colors = when {
+                                    state.isWakeWordHighlight -> listOf(GoldAccent, CyanListening, Color.White, GoldAccent)
+                                    state.mode == BubbleMode.LISTENING -> listOf(CyanListening, Color.White, CyanListening)
+                                    state.mode == BubbleMode.SPEAKING -> listOf(EmeraldSpeaking, CyanListening, EmeraldSpeaking)
+                                    else -> listOf(GoldAccent, Color.White, GoldBorder, GoldAccent)
                                 }
                             ),
                             shape = CircleShape

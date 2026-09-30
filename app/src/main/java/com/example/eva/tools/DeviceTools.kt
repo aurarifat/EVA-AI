@@ -14,14 +14,15 @@ import java.io.File
 
 class DeviceTools(private val context: Context) {
 
-    private val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
+    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
     private var isFlashlightOn = false
 
     fun toggleFlashlight(enable: Boolean? = null): ToolExecutionResult {
         return try {
-            val cameraId = cameraManager.cameraIdList.firstOrNull { id ->
-                val characteristics = cameraManager.getCameraCharacteristics(id)
+            val cm = cameraManager ?: return ToolExecutionResult(false, "Camera hardware is not available on this device.")
+            val cameraId = cm.cameraIdList.firstOrNull { id ->
+                val characteristics = cm.getCameraCharacteristics(id)
                 characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
             }
 
@@ -30,7 +31,7 @@ class DeviceTools(private val context: Context) {
             }
 
             val targetState = enable ?: !isFlashlightOn
-            cameraManager.setTorchMode(cameraId, targetState)
+            cm.setTorchMode(cameraId, targetState)
             isFlashlightOn = targetState
 
             val stateText = if (targetState) "on" else "off"
@@ -44,9 +45,10 @@ class DeviceTools(private val context: Context) {
 
     fun setVolume(percentage: Int): ToolExecutionResult {
         return try {
-            val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+            val am = audioManager ?: return ToolExecutionResult(false, "Audio service unavailable")
+            val maxVolume = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
             val targetVolume = (percentage.coerceIn(0, 100) * maxVolume) / 100
-            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, targetVolume, AudioManager.FLAG_SHOW_UI)
+            am.setStreamVolume(AudioManager.STREAM_MUSIC, targetVolume, AudioManager.FLAG_SHOW_UI)
             ToolExecutionResult(true, "Media volume set to $percentage percent.")
         } catch (e: Exception) {
             ToolExecutionResult(false, "Failed to set volume: ${e.localizedMessage}")
@@ -55,10 +57,11 @@ class DeviceTools(private val context: Context) {
 
     fun adjustVolume(increase: Boolean): ToolExecutionResult {
         return try {
+            val am = audioManager ?: return ToolExecutionResult(false, "Audio service unavailable")
             val direction = if (increase) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER
-            audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, AudioManager.FLAG_SHOW_UI)
-            val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-            val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+            am.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, AudioManager.FLAG_SHOW_UI)
+            val current = am.getStreamVolume(AudioManager.STREAM_MUSIC)
+            val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
             val percent = (current * 100) / max
             ToolExecutionResult(true, "Volume ${if (increase) "increased" else "decreased"} to $percent percent.")
         } catch (e: Exception) {
@@ -68,11 +71,13 @@ class DeviceTools(private val context: Context) {
 
     fun muteVolume(mute: Boolean): ToolExecutionResult {
         return try {
+            val am = audioManager ?: return ToolExecutionResult(false, "Audio service unavailable")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 val direction = if (mute) AudioManager.ADJUST_MUTE else AudioManager.ADJUST_UNMUTE
-                audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, AudioManager.FLAG_SHOW_UI)
+                am.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, AudioManager.FLAG_SHOW_UI)
             } else {
-                audioManager.setStreamMute(AudioManager.STREAM_MUSIC, mute)
+                @Suppress("DEPRECATION")
+                am.setStreamMute(AudioManager.STREAM_MUSIC, mute)
             }
             ToolExecutionResult(true, if (mute) "Media muted." else "Media unmuted.")
         } catch (e: Exception) {

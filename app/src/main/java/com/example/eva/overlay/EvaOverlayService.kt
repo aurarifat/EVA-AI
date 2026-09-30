@@ -49,9 +49,13 @@ import com.example.eva.tools.QrTools
 import com.example.eva.tools.ToolRegistry
 import com.example.eva.voice.EvaSpeechRecognizer
 import com.example.eva.voice.EvaTextToSpeech
+import com.example.eva.voice.VoicePersonality
 import com.example.eva.voice.VoiceState
+import com.example.eva.voice.WakeWordFeedback
+import com.example.eva.voice.WakeWordListener
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -84,6 +88,12 @@ class EvaOverlayService : Service() {
     private lateinit var speechRecognizer: EvaSpeechRecognizer
     private lateinit var tts: EvaTextToSpeech
     private lateinit var commandDispatcher: CommandDispatcher
+    private lateinit var preferences: EvaPreferences
+
+    // Wake Word Listener ("Hi EVA")
+    private var wakeWordListener: WakeWordListener? = null
+    private var isWakeWordActive = false
+    private var followUpTimeoutJob: Job? = null
 
     companion object {
         private const val TAG = "EvaOverlayService"
@@ -163,14 +173,13 @@ class EvaOverlayService : Service() {
         activeInstance = this
         try {
             createNotificationChannel()
-            startForegroundNotification()
             initDependencies()
+            startForegroundNotification(isWakeWordActive)
 
             if (isOverlayPermissionGranted(this)) {
                 setupComposeOverlay()
             } else {
-                Log.w(TAG, "Overlay permission not granted. Stopping service.")
-                stopSelf()
+                Log.d(TAG, "Overlay permission not granted; running in background voice/wake-word service mode")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error during onCreate: ${e.message}", e)
@@ -195,6 +204,7 @@ class EvaOverlayService : Service() {
     private fun initDependencies() {
         val app = applicationContext
         val preferences = EvaPreferences(app)
+        this.preferences = preferences
         val keyStore = SecureKeyStore(app)
         shizukuManager = ShizukuManager(app)
         screenAutomation = DeviceScreenAutomation(app, shizukuManager)
@@ -258,6 +268,23 @@ class EvaOverlayService : Service() {
                 }
             }
         }
+
+        // Observe Wake Word configuration ("Hi EVA")
+        serviceScope.launch {
+            preferences.settingsFlow.collect { s ->
+                val wakeEnabled = s.wakeWordEnabled
+                if (wakeEnabled != isWakeWordActive) {
+                    isWakeWordActive = wakeEnabled
+                    if (wakeEnabled) {
+                        startWakeWordEngine()
+                    } else {
+                        stopWakeWordEngine()
+                    }
+                    startForegroundNotification(isWakeWordActive)
+                }
+                wakeWordListener?.updateSensitivity(s.wakeWordSensitivity)
+            }
+        }
     }
 
     private fun createNotificationChannel() {
@@ -275,7 +302,7 @@ class EvaOverlayService : Service() {
         }
     }
 
-    private fun startForegroundNotification() {
+    private fun startForegroundNotification(wakeWordActive: Boolean = isWakeWordActive) {
         val openAppIntent = Intent(this, MainActivity::class.java).apply {
             putExtra(MainActivity.EXTRA_MANUAL_OPEN, true)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -287,9 +314,12 @@ class EvaOverlayService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
+        val title = if (wakeWordActive) "EVA AI Assistant Active" else "EVA Display Overlay Active"
+        val content = if (wakeWordActive) "EVA AI is listening for 'Hi EVA'" else "Persistent assistant bubble is active. Tap to interact."
+
         val notification: Notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-            .setContentTitle("EVA Display Overlay Active")
-            .setContentText("Persistent assistant bubble is active. Tap to interact.")
+            .setContentTitle(title)
+            .setContentText(content)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentIntent(pendingIntent)
             .addAction(
@@ -302,25 +332,35 @@ class EvaOverlayService : Service() {
             .build()
 
         try {
+            val hasMicPermission = androidx.core.content.ContextCompat.checkSelfPermission(
+                this,
+                android.Manifest.permission.RECORD_AUDIO
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                startForeground(
-                    NOTIFICATION_ID,
-                    notification,
+                val fgsType = if (hasMicPermission && wakeWordActive) {
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-                )
+                } else {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                }
+                startForeground(NOTIFICATION_ID, notification, fgsType)
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                startForeground(
-                    NOTIFICATION_ID,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-                )
+                if (hasMicPermission && wakeWordActive) {
+                    startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+                } else {
+                    startForeground(NOTIFICATION_ID, notification)
+                }
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
         } catch (e: Exception) {
             Log.w(TAG, "startForeground with type failed, falling back: ${e.message}")
             try {
-                startForeground(NOTIFICATION_ID, notification)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+                } else {
+                    startForeground(NOTIFICATION_ID, notification)
+                }
             } catch (fallbackEx: Exception) {
                 Log.e(TAG, "Fatal startForeground error: ${fallbackEx.message}", fallbackEx)
             }
@@ -464,15 +504,119 @@ class EvaOverlayService : Service() {
         }
     }
 
-    private fun stopListeningMode() {
-        speechRecognizer.stopListening()
+    private fun startWakeWordEngine() {
+        if (wakeWordListener == null) {
+            wakeWordListener = WakeWordListener(
+                context = applicationContext,
+                onWakeWordDetected = {
+                    handleWakeWordTriggered()
+                }
+            )
+        }
+        wakeWordListener?.startListening()
         _uiState.update {
             it.copy(
-                mode = BubbleMode.IDLE,
-                statusText = "EVA Ready",
+                statusText = if (it.mode == BubbleMode.IDLE) "EVA AI is listening for 'Hi EVA'" else it.statusText
+            )
+        }
+    }
+
+    private fun stopWakeWordEngine() {
+        wakeWordListener?.stopListening()
+        wakeWordListener = null
+        _uiState.update {
+            it.copy(
+                statusText = if (it.mode == BubbleMode.IDLE) "EVA Ready" else it.statusText
+            )
+        }
+    }
+
+    private fun handleWakeWordTriggered() {
+        Log.d(TAG, "Wake word detected in EvaOverlayService! Triggering warm response flow.")
+        wakeWordListener?.pauseListening()
+
+        // Haptic and chime
+        WakeWordFeedback.triggerHaptic(this)
+        WakeWordFeedback.playChime(this)
+
+        // Animate / highlight bubble
+        _uiState.update {
+            it.copy(
+                isWakeWordHighlight = true,
+                mode = BubbleMode.SPEAKING,
+                statusText = "Hi! 💛"
+            )
+        }
+
+        serviceScope.launch(Dispatchers.Main) {
+            delay(2200)
+            _uiState.update { it.copy(isWakeWordHighlight = false) }
+        }
+
+        // Pick warm rotating ready-phrase
+        val readyPhrase = VoicePersonality.getWakeWordReadyPhrase()
+        tts.speak(readyPhrase) {
+            serviceScope.launch(Dispatchers.Main) {
+                startFollowUpCommandListening()
+            }
+        }
+    }
+
+    private fun startFollowUpCommandListening() {
+        _uiState.update {
+            it.copy(
+                mode = BubbleMode.LISTENING,
+                statusText = "Listening for command... 💛",
                 recognizedText = ""
             )
         }
+
+        // 7.5 seconds quiet timeout: quietly return to wake-word listening if no command
+        followUpTimeoutJob?.cancel()
+        followUpTimeoutJob = serviceScope.launch {
+            delay(7500)
+            if (_uiState.value.mode == BubbleMode.LISTENING) {
+                Log.d(TAG, "Follow-up command timed out quietly; returning to wake word")
+                speechRecognizer.stopListening()
+                returnToWakeWordMode()
+            }
+        }
+
+        speechRecognizer.startListening(
+            language = "en-US",
+            onResult = { spoken ->
+                followUpTimeoutJob?.cancel()
+                processCommand(spoken)
+            },
+            onError = { err ->
+                followUpTimeoutJob?.cancel()
+                Log.d(TAG, "No follow-up speech detected ($err); quietly returning to wake word")
+                returnToWakeWordMode()
+            }
+        )
+    }
+
+    private fun returnToWakeWordMode() {
+        followUpTimeoutJob?.cancel()
+        _uiState.update {
+            it.copy(
+                mode = BubbleMode.IDLE,
+                statusText = if (isWakeWordActive) "EVA AI is listening for 'Hi EVA'" else "EVA Ready",
+                isWakeWordHighlight = false,
+                recognizedText = "",
+                spokenText = "",
+                isProcessing = false
+            )
+        }
+        if (isWakeWordActive) {
+            wakeWordListener?.resumeListening()
+        }
+    }
+
+    private fun stopListeningMode() {
+        followUpTimeoutJob?.cancel()
+        speechRecognizer.stopListening()
+        returnToWakeWordMode()
     }
 
     private fun startListeningMode() {
@@ -549,20 +693,20 @@ class EvaOverlayService : Service() {
                 lower.contains("open adguard") || lower.contains("launch adguard") -> {
                     _uiState.update { it.copy(statusText = "Opening AdGuard...") }
                     val (ok, msg) = screenAutomation.launchApp("AdGuard")
-                    if (ok) "Opened AdGuard. I am waiting for your next commands." else msg
+                    if (ok) "Opened AdGuard for you! 💛" else msg
                 }
                 // "Close ads", "close ad", "skip ad"
                 lower.contains("close ad") || lower.contains("close ads") || lower.contains("skip ad") -> {
                     _uiState.update { it.copy(statusText = "Closing ads...") }
                     val (ok, msg) = screenAutomation.closeAds()
-                    if (ok) "Closed the ad. Waiting for your next commands." else msg
+                    if (ok) "Closed the ad! 💛" else msg
                 }
                 // "Turn the protection on", "turn on protection", "enable protection"
                 lower.contains("protection on") || lower.contains("turn on protection") ||
                         lower.contains("turn the protection on") || lower.contains("enable protection") -> {
                     _uiState.update { it.copy(statusText = "Turning protection on...") }
                     val (ok, msg) = screenAutomation.turnProtectionOn()
-                    if (ok) "Protection turned on. Waiting for your next commands." else msg
+                    if (ok) "Protection is turned on for you! 💛" else msg
                 }
                 // Whole-device gestures & taps
                 lower.startsWith("click ") || lower.startsWith("tap ") -> {
@@ -573,29 +717,29 @@ class EvaOverlayService : Service() {
                 }
                 lower.contains("scroll down") -> {
                     screenAutomation.scrollDown()
-                    "Scrolled down."
+                    "Scrolled down for you! 💛"
                 }
                 lower.contains("scroll up") -> {
                     screenAutomation.scrollUp()
-                    "Scrolled up."
+                    "Scrolled up for you! 💛"
                 }
                 lower.contains("slide left") || lower.contains("swipe left") -> {
                     screenAutomation.slideLeft()
-                    "Slid left."
+                    "Slid left for you! 💛"
                 }
                 lower.contains("slide right") || lower.contains("swipe right") -> {
                     screenAutomation.slideRight()
-                    "Slid right."
+                    "Slid right for you! 💛"
                 }
                 // Toggle Home Screen
                 lower == "home" || lower == "go home" || lower.contains("toggle home") || lower.contains("home screen") || lower == "toggle to home" -> {
                     toggleToHomeScreen()
-                    "Switched to home screen."
+                    "Switched to home screen! 💛"
                 }
                 // Open full EVA application
                 lower.contains("open app") || lower.contains("open eva") || lower.contains("open settings") -> {
                     openFullApp()
-                    "Opened EVA app."
+                    "Opened EVA app for you! 💛"
                 }
                 // Close overlay
                 lower.contains("close overlay") || lower.contains("exit overlay") || lower.contains("hide overlay") -> {
@@ -620,30 +764,16 @@ class EvaOverlayService : Service() {
             }
 
             tts.speak(responseText) {
-                // When TTS completes, return to IDLE mode ready for next commands
+                // When TTS completes, return to wake-word / IDLE mode ready for next commands
                 serviceScope.launch(Dispatchers.Main) {
-                    _uiState.update {
-                        it.copy(
-                            mode = BubbleMode.IDLE,
-                            statusText = "EVA Ready",
-                            recognizedText = "",
-                            spokenText = ""
-                        )
-                    }
+                    returnToWakeWordMode()
                 }
             }
 
             // Fallback timer if TTS utterance progress listener fails to fire
             delay(4000)
             if (_uiState.value.mode == BubbleMode.SPEAKING) {
-                _uiState.update {
-                    it.copy(
-                        mode = BubbleMode.IDLE,
-                        statusText = "EVA Ready",
-                        recognizedText = "",
-                        spokenText = ""
-                    )
-                }
+                returnToWakeWordMode()
             }
         }
     }
@@ -733,6 +863,9 @@ class EvaOverlayService : Service() {
         super.onDestroy()
         try {
             serviceScope.cancel()
+            followUpTimeoutJob?.cancel()
+            wakeWordListener?.destroy()
+            wakeWordListener = null
             speechRecognizer.stopListening()
             tts.shutdown()
 

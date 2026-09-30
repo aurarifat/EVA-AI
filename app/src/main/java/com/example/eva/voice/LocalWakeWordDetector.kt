@@ -1,0 +1,215 @@
+package com.example.eva.voice
+
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.media.AudioFormat
+import android.media.AudioManager
+import android.media.AudioRecord
+import android.media.MediaRecorder
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.Process
+import android.util.Log
+import androidx.core.content.ContextCompat
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import java.util.concurrent.atomic.AtomicBoolean
+
+/**
+ * Local Wake-Word Detection Engine.
+ * Streams microphone PCM audio into [LocalWakeWordModel] completely offline without any network traffic.
+ * Implements real-time Voice Activity Detection (VAD) and temporal keyword spotting for "Hi EVA".
+ */
+class LocalWakeWordDetector(
+    private val context: Context,
+    var sensitivity: Float = 0.6f,
+    private val onWakeWordDetected: (keyword: String, confidence: Float) -> Unit
+) {
+    companion object {
+        private const val TAG = "LocalWakeWordDetector"
+        const val SAMPLE_RATE = 16000
+        const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
+        const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
+    }
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+    private val model = LocalWakeWordModel(sensitivity)
+
+    private val isRunning = AtomicBoolean(false)
+    private val isPaused = AtomicBoolean(false)
+    private var recordingThread: Thread? = null
+    private var audioRecord: AudioRecord? = null
+
+    private val _isListening = MutableStateFlow(false)
+    val isListening: StateFlow<Boolean> = _isListening.asStateFlow()
+
+    private val _rmsLevel = MutableStateFlow(0f)
+    val rmsLevel: StateFlow<Float> = _rmsLevel.asStateFlow()
+
+    fun updateSensitivity(newSensitivity: Float) {
+        this.sensitivity = newSensitivity.coerceIn(0.1f, 1.0f)
+        model.sensitivity = this.sensitivity
+    }
+
+    fun start() {
+        if (isRunning.getAndSet(true)) {
+            Log.d(TAG, "LocalWakeWordDetector already running")
+            return
+        }
+        isPaused.set(false)
+        model.reset()
+        startAudioCaptureThread()
+    }
+
+    fun stop() {
+        if (!isRunning.getAndSet(false)) {
+            return
+        }
+        isPaused.set(false)
+        stopAudioCaptureThread()
+        _isListening.value = false
+        _rmsLevel.value = 0f
+    }
+
+    fun pause() {
+        if (!isRunning.get() || isPaused.getAndSet(true)) return
+        Log.d(TAG, "LocalWakeWordDetector paused")
+        stopAudioCaptureThread()
+        _isListening.value = false
+        _rmsLevel.value = 0f
+    }
+
+    fun resume() {
+        if (!isRunning.get() || !isPaused.getAndSet(false)) return
+        Log.d(TAG, "LocalWakeWordDetector resumed")
+        model.reset()
+        startAudioCaptureThread()
+    }
+
+    fun destroy() {
+        stop()
+    }
+
+    private fun isPhoneCallOrMicBusy(): Boolean {
+        val mode = audioManager?.mode ?: AudioManager.MODE_NORMAL
+        return mode == AudioManager.MODE_IN_CALL ||
+                mode == AudioManager.MODE_IN_COMMUNICATION ||
+                mode == AudioManager.MODE_RINGTONE
+    }
+
+    private fun startAudioCaptureThread() {
+        stopAudioCaptureThread()
+
+        if (isPhoneCallOrMicBusy()) {
+            Log.d(TAG, "Phone call or mic communication in progress, deferring audio capture")
+            mainHandler.postDelayed({
+                if (isRunning.get() && !isPaused.get()) {
+                    startAudioCaptureThread()
+                }
+            }, 2500L)
+            return
+        }
+
+        // Check permission
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            Log.w(TAG, "RECORD_AUDIO permission missing; cannot start local wake word detector")
+            _isListening.value = false
+            return
+        }
+
+        val minBufSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
+        if (minBufSize <= 0) {
+            Log.e(TAG, "Invalid AudioRecord minBufferSize: $minBufSize")
+            return
+        }
+        val bufferSize = (minBufSize * 2).coerceAtLeast(LocalWakeWordModel.FRAME_SIZE * 4)
+
+        try {
+            val audioSource = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                MediaRecorder.AudioSource.VOICE_RECOGNITION
+            } else {
+                MediaRecorder.AudioSource.MIC
+            }
+
+            val record = AudioRecord(
+                audioSource,
+                SAMPLE_RATE,
+                CHANNEL_CONFIG,
+                AUDIO_FORMAT,
+                bufferSize
+            )
+
+            if (record.state != AudioRecord.STATE_INITIALIZED) {
+                Log.w(TAG, "AudioRecord failed to initialize (state: ${record.state})")
+                record.release()
+                return
+            }
+
+            audioRecord = record
+            record.startRecording()
+            _isListening.value = true
+
+            recordingThread = Thread({
+                Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
+                val frameBuffer = ShortArray(LocalWakeWordModel.FRAME_SIZE)
+                var lastUiRmsTime = 0L
+
+                while (isRunning.get() && !isPaused.get()) {
+                    val readSamples = record.read(frameBuffer, 0, frameBuffer.size)
+                    if (readSamples <= 0) {
+                        Thread.sleep(16)
+                        continue
+                    }
+
+                    // Extract features using local acoustic model
+                    val features = model.extractFeatures(frameBuffer)
+
+                    // Throttle UI RMS updates to ~20Hz
+                    val now = System.currentTimeMillis()
+                    if (now - lastUiRmsTime > 50L) {
+                        _rmsLevel.value = (features.rms * 8f).coerceIn(0f, 1f)
+                        lastUiRmsTime = now
+                    }
+
+                    // Feed frame to local keyword spotting state machine
+                    val (isDetected, confidence) = model.processFrame(features)
+                    if (isDetected) {
+                        Log.i(TAG, ">>> Local Model Wake Word Fired! Confidence: $confidence <<<")
+                        mainHandler.post {
+                            onWakeWordDetected("Hi EVA", confidence)
+                        }
+                    }
+                }
+
+                try {
+                    record.stop()
+                    record.release()
+                } catch (_: Exception) {}
+                _isListening.value = false
+                _rmsLevel.value = 0f
+            }, "EvaLocalWakeWordThread").apply {
+                isDaemon = true
+                start()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error starting AudioRecord capture thread: ${e.message}", e)
+            _isListening.value = false
+        }
+    }
+
+    private fun stopAudioCaptureThread() {
+        val thread = recordingThread
+        recordingThread = null
+        try {
+            audioRecord?.stop()
+            audioRecord?.release()
+        } catch (_: Exception) {}
+        audioRecord = null
+
+        thread?.interrupt()
+    }
+}

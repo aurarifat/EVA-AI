@@ -313,7 +313,7 @@ class TelegramBotManager(
                 apiClient.sendChatAction(token, chatId, "typing")
 
                 // Save user message to database
-                database.conversationDao().insert(
+                database.conversationDao().insertMessage(
                     ConversationEntity(
                         role = "user",
                         content = "[Telegram] $text",
@@ -333,7 +333,7 @@ class TelegramBotManager(
                     }
 
                     // Save assistant reply to database
-                    database.conversationDao().insert(
+                    database.conversationDao().insertMessage(
                         ConversationEntity(
                             role = "eva",
                             content = replyContent,

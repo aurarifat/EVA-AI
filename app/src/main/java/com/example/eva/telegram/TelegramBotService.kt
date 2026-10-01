@@ -13,7 +13,7 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.MainActivity
-import com.example.eva.R
+import com.example.R
 import com.example.eva.ai.AiRepository
 import com.example.eva.context.CommandDispatcher
 import com.example.eva.context.ContextManager
@@ -185,7 +185,7 @@ class TelegramBotService : Service() {
         val notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setContentTitle("EVA Telegram Bot")
             .setContentText("Remote assistant active • Listening for owner commands")
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentIntent(pendingOpen)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", pendingStop)
             .setOngoing(true)

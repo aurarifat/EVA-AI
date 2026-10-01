@@ -4,7 +4,8 @@ import com.example.eva.data.prefs.AiProviderType
 
 data class ChatMessage(
     val role: String, // "system", "user", "assistant"
-    val content: String
+    val content: String,
+    val imageBase64: String? = null
 )
 
 data class AiResponse(

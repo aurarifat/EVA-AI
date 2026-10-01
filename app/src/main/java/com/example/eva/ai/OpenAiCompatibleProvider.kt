@@ -64,7 +64,22 @@ class OpenAiCompatibleProvider(
         for (msg in messages) {
             val msgObj = JSONObject()
             msgObj.put("role", msg.role)
-            msgObj.put("content", msg.content)
+            if (msg.imageBase64 != null) {
+                val parts = JSONArray()
+                parts.put(JSONObject().apply {
+                    put("type", "text")
+                    put("text", msg.content)
+                })
+                parts.put(JSONObject().apply {
+                    put("type", "image_url")
+                    put("image_url", JSONObject().apply {
+                        put("url", "data:image/jpeg;base64,${msg.imageBase64}")
+                    })
+                })
+                msgObj.put("content", parts)
+            } else {
+                msgObj.put("content", msg.content)
+            }
             messagesArray.put(msgObj)
         }
         requestJson.put("messages", messagesArray)
@@ -108,7 +123,7 @@ class OpenAiCompatibleProvider(
             val cleanContent = cleanContentOfToolJson(content)
 
             AiResponse(
-                content = cleanContent.ifBlank { "Done! 💛" },
+                content = cleanContent.ifBlank { if (toolCall != null) "On it." else "I'm right here. How can I help you?" },
                 toolCall = toolCall,
                 providerUsed = providerType,
                 latencyMs = latency,
@@ -160,7 +175,22 @@ class OpenAiCompatibleProvider(
         for (msg in messages) {
             val msgObj = JSONObject()
             msgObj.put("role", msg.role)
-            msgObj.put("content", msg.content)
+            if (msg.imageBase64 != null) {
+                val parts = JSONArray()
+                parts.put(JSONObject().apply {
+                    put("type", "text")
+                    put("text", msg.content)
+                })
+                parts.put(JSONObject().apply {
+                    put("type", "image_url")
+                    put("image_url", JSONObject().apply {
+                        put("url", "data:image/jpeg;base64,${msg.imageBase64}")
+                    })
+                })
+                msgObj.put("content", parts)
+            } else {
+                msgObj.put("content", msg.content)
+            }
             messagesArray.put(msgObj)
         }
         requestJson.put("messages", messagesArray)
@@ -226,7 +256,7 @@ class OpenAiCompatibleProvider(
             val cleanContent = cleanContentOfToolJson(fullContent)
 
             AiResponse(
-                content = cleanContent.ifBlank { "Done! 💛" },
+                content = cleanContent.ifBlank { if (toolCall != null) "On it." else "I'm right here. How can I help you?" },
                 toolCall = toolCall,
                 providerUsed = providerType,
                 latencyMs = System.currentTimeMillis() - startTime,

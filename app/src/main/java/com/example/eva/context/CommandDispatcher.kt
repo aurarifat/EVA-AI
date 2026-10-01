@@ -133,7 +133,7 @@ class CommandDispatcher(
             if (contextResolution.actionType == "app_toggle") {
                 val appName = contextResolution.target
                 val onOff = contextResolution.parameter ?: "on"
-                val spoken = "All set! Turned $onOff $appName for you 💛"
+                val spoken = "All set! Turned $onOff $appName for you."
                 contextManager.setTask("configured_${appName.lowercase()}_$onOff", "active")
                 contextManager.updateCommand(input, spoken)
                 return@withContext CommandResult(
@@ -147,30 +147,67 @@ class CommandDispatcher(
 
         val settings = preferences.settingsFlow.first()
 
-        // 5. CHAT MODE ENFORCEMENT: When in Chat Mode, tool automation is disabled
-        if (!settings.isAgentMode) {
-            val messages = listOf(ChatMessage("user", input))
-            val aiResponse = aiRepository.executeAiRequest(
-                messages = messages,
-                toolsPrompt = VoicePersonality.getSystemPrompt()
-            )
-            val cleanText = stripJsonBlocks(aiResponse.content)
-            val finalReply = cleanText.ifBlank { "I'm right here! What do you need? 💛" }
-            contextManager.updateCommand(input, finalReply)
-            return@withContext CommandResult(spokenResponse = finalReply, isSuccess = aiResponse.isSuccess)
-        }
-
-        // 6. AGENT MODE: FAST-PATH INTENT ROUTER (Zero LLM roundtrip, 5ms-25ms)
+        // 5. FAST-PATH DIRECT INTENT ENGINE: Check local device commands first (5ms-25ms)
         val fastResult = executeSingleCommandFast(input)
         if (fastResult != null) {
             contextManager.updateCommand(input, fastResult.spokenResponse)
             return@withContext fastResult
         }
 
-        // 7. AGENT MODE: AUTONOMOUS AGENT TASK FOR COMPLEX / MULTI-STEP GOALS
-        val autonomousResult = executeAutonomousAgentTask(input, settings, onStepProgress)
-        contextManager.updateCommand(input, autonomousResult.spokenResponse)
-        autonomousResult
+        // 6. INTENT CLASSIFICATION: Decide if input is a Device Automation Task vs Natural Language Conversation
+        val isDeviceAction = settings.isAgentMode && isDeviceAutomationIntent(input)
+
+        if (isDeviceAction) {
+            // 7. AGENT MODE: AUTONOMOUS AGENT TASK FOR COMPLEX / MULTI-STEP GOALS
+            val autonomousResult = executeAutonomousAgentTask(input, settings, onStepProgress)
+            contextManager.updateCommand(input, autonomousResult.spokenResponse)
+            return@withContext autonomousResult
+        } else {
+            // 8. CONVERSATIONAL AI MODE: Process natural language dialogue, greetings, questions, or general assistance
+            val messages = listOf(ChatMessage("user", input))
+            val aiResponse = aiRepository.executeAiRequest(
+                messages = messages,
+                toolsPrompt = VoicePersonality.getSystemPrompt()
+            )
+            val cleanText = stripJsonBlocks(aiResponse.content).replace("💛", "").replace("✨", "").trim()
+            val finalReply = cleanText.ifBlank { "I'm right here. How can I help you?" }
+            contextManager.updateCommand(input, finalReply)
+            return@withContext CommandResult(spokenResponse = finalReply, toolName = "chat", isSuccess = aiResponse.isSuccess)
+        }
+    }
+
+    /**
+     * Determines whether an input is an actionable device/UI task rather than a conversational greeting or query.
+     */
+    private fun isDeviceAutomationIntent(input: String): Boolean {
+        val lower = input.lowercase().trim()
+
+        // Explicit conversational greetings, identity, small talk, and general questions are NEVER device tasks
+        val conversationalPhrases = listOf(
+            "hi", "hello", "hey", "good morning", "good evening", "good afternoon", "howdy", "sup",
+            "what's your name", "what is your name", "who are you", "who made you", "who created you",
+            "how are you", "what can you do", "tell me a joke", "who is", "what is", "why is",
+            "tell me about", "thank you", "thanks", "bye", "goodbye", "help", "how does", "explain"
+        )
+        if (conversationalPhrases.any { lower == it || lower.startsWith("$it ") || lower.startsWith("$it,") || lower.startsWith("$it?") || lower.startsWith("$it!") }) {
+            return false
+        }
+
+        // Action verbs and keywords that indicate device, UI, screen, or app tasks
+        val actionKeywords = listOf(
+            "open ", "launch ", "start ", "close ", "kill ", "quit ",
+            "click ", "tap ", "press ", "type ", "enter ",
+            "scroll ", "swipe ", "slide ", "drag ",
+            "turn on", "turn off", "enable", "disable", "toggle",
+            "install", "uninstall", "download",
+            "set ", "change ", "mute", "unmute", "increase", "decrease",
+            "call ", "dial ", "sms ", "text ", "send message",
+            "play ", "pause ", "stop music",
+            "search for ", "navigate to ", "take a screenshot",
+            "flashlight", "brightness", "wifi", "bluetooth", "shizuku"
+        )
+
+        return actionKeywords.any { lower.contains(it) }
     }
 
     /**
@@ -187,7 +224,7 @@ class CommandDispatcher(
                 else -> null
             }
             val res = toolRegistry.deviceTools.toggleFlashlight(enable)
-            val spoken = if (res.isSuccess) "All set! Flashlight is ${if (enable != false) "on" else "off"} 💛" else res.message
+            val spoken = if (res.isSuccess) "All set! Flashlight is ${if (enable != false) "on" else "off"}." else res.message
             return CommandResult(spokenResponse = spoken, toolName = "flashlight", toolResult = res.message, isSuccess = res.isSuccess)
         }
 
@@ -258,21 +295,21 @@ class CommandDispatcher(
             val query = command.substringAfter("search").replace("youtube", "", ignoreCase = true).replace("for", "", ignoreCase = true).replace("on", "", ignoreCase = true).trim()
             val targetQuery = query.ifBlank { "Class 9 Physics" }
             val res = toolRegistry.networkTools.searchYouTube(targetQuery)
-            return CommandResult(spokenResponse = "Searching YouTube for $targetQuery 💛", toolName = "youtube_search", toolResult = res.message, isSuccess = res.isSuccess)
+            return CommandResult(spokenResponse = "Searching YouTube for $targetQuery.", toolName = "youtube_search", toolResult = res.message, isSuccess = res.isSuccess)
         }
 
         // Google / Web search: "search google for ...", "google ...", "search for ... on google"
         if (lower.startsWith("search google for ") || lower.startsWith("google ") || (lower.contains("google") && lower.contains("search"))) {
             val query = command.substringAfter("for").replace("search", "", ignoreCase = true).replace("google", "", ignoreCase = true).replace("on", "", ignoreCase = true).trim()
             val res = toolRegistry.networkTools.openWebSearch(query.ifBlank { "latest news" })
-            return CommandResult(spokenResponse = "Searching Google for $query 💛", toolName = "web_search", toolResult = res.message, isSuccess = res.isSuccess)
+            return CommandResult(spokenResponse = "Searching Google for $query.", toolName = "web_search", toolResult = res.message, isSuccess = res.isSuccess)
         }
 
         // Display Overlay: "open display overlay", "floating bubble"
         if (lower.contains("display overlay") || lower.contains("floating bubble") || lower.contains("open overlay")) {
             val res = toolRegistry.executeTool("display_overlay", "start", emptyMap())
             return CommandResult(
-                spokenResponse = if (res.isSuccess) "Starting overlay bubble! Right here whenever you need me 💛" else res.message,
+                spokenResponse = if (res.isSuccess) "Starting overlay bubble. Right here whenever you need me." else res.message,
                 toolName = "display_overlay",
                 toolResult = res.message,
                 isSuccess = res.isSuccess
@@ -282,19 +319,19 @@ class CommandDispatcher(
         // Navigation: Home screen
         if (lower == "home" || lower == "go home" || lower.contains("toggle home") || lower.contains("home screen") || lower == "toggle to home" || lower == "press home") {
             val res = toolRegistry.backendSelector.executeSafeAction("press_home") { it.pressHome() }
-            return CommandResult(spokenResponse = "Switched to home screen! 💛", toolName = "press_home", toolResult = res.message, isSuccess = res.isSuccess)
+            return CommandResult(spokenResponse = "Switched to home screen.", toolName = "press_home", toolResult = res.message, isSuccess = res.isSuccess)
         }
 
         // Navigation: Back
         if (lower == "back" || lower == "go back" || lower == "press back") {
             val res = toolRegistry.backendSelector.executeSafeAction("press_back") { it.pressBack() }
-            return CommandResult(spokenResponse = "Went back for you! 💛", toolName = "press_back", toolResult = res.message, isSuccess = res.isSuccess)
+            return CommandResult(spokenResponse = "Went back for you.", toolName = "press_back", toolResult = res.message, isSuccess = res.isSuccess)
         }
 
         // Enter key
         if (lower == "enter" || lower == "press enter" || lower == "hit enter") {
             val res = toolRegistry.backendSelector.executeSafeAction("press_enter") { it.pressEnter() }
-            return CommandResult(spokenResponse = "Pressed Enter for you! 💛", toolName = "press_enter", toolResult = res.message, isSuccess = res.isSuccess)
+            return CommandResult(spokenResponse = "Pressed Enter for you.", toolName = "press_enter", toolResult = res.message, isSuccess = res.isSuccess)
         }
 
         // Read Screen
@@ -309,22 +346,29 @@ class CommandDispatcher(
             return CommandResult(spokenResponse = msg, toolName = "close_ads", toolResult = msg, isSuccess = ok)
         }
 
+        // Turn protection on
+        if (lower.contains("protection on") || lower.contains("turn on protection") ||
+            lower.contains("turn the protection on") || lower.contains("enable protection")) {
+            val (ok, msg) = toolRegistry.deviceScreenAutomation.turnProtectionOn()
+            return CommandResult(spokenResponse = if (ok) "Protection is turned on for you." else msg, toolName = "protection", toolResult = msg, isSuccess = ok)
+        }
+
         // Screen Gestures: scroll / swipe
         if (lower == "scroll down" || lower == "scroll down screen") {
             val res = toolRegistry.backendSelector.executeSafeAction("scroll") { it.scroll(ScrollDirection.DOWN) }
-            return CommandResult(spokenResponse = "Scrolled down for you! 💛", toolName = "scroll", toolResult = res.message, isSuccess = res.isSuccess)
+            return CommandResult(spokenResponse = "Scrolled down for you.", toolName = "scroll", toolResult = res.message, isSuccess = res.isSuccess)
         }
         if (lower == "scroll up" || lower == "scroll up screen") {
             val res = toolRegistry.backendSelector.executeSafeAction("scroll") { it.scroll(ScrollDirection.UP) }
-            return CommandResult(spokenResponse = "Scrolled up for you! 💛", toolName = "scroll", toolResult = res.message, isSuccess = res.isSuccess)
+            return CommandResult(spokenResponse = "Scrolled up for you.", toolName = "scroll", toolResult = res.message, isSuccess = res.isSuccess)
         }
         if (lower == "slide left" || lower == "swipe left") {
             val res = toolRegistry.backendSelector.executeSafeAction("scroll") { it.scroll(ScrollDirection.LEFT) }
-            return CommandResult(spokenResponse = "Swiped left for you! 💛", toolName = "scroll", toolResult = res.message, isSuccess = res.isSuccess)
+            return CommandResult(spokenResponse = "Swiped left for you.", toolName = "scroll", toolResult = res.message, isSuccess = res.isSuccess)
         }
         if (lower == "slide right" || lower == "swipe right") {
             val res = toolRegistry.backendSelector.executeSafeAction("scroll") { it.scroll(ScrollDirection.RIGHT) }
-            return CommandResult(spokenResponse = "Swiped right for you! 💛", toolName = "scroll", toolResult = res.message, isSuccess = res.isSuccess)
+            return CommandResult(spokenResponse = "Swiped right for you.", toolName = "scroll", toolResult = res.message, isSuccess = res.isSuccess)
         }
 
         // Coordinate Tap: "click at 500 800", "tap at 500, 800"
@@ -493,14 +537,20 @@ class CommandDispatcher(
             // 3. Fast Remote Query (maxTokens = 120, temp = 0.1)
             val aiResponse = aiRepository.executeAiRequest(
                 messages = listOf(ChatMessage("user", prompt)),
-                toolsPrompt = "You are EVA Fast Agent. Output ONLY JSON tool call. For final done, keep summary sweet and concise like 'Done! 💛' or 'All set for you.'",
+                toolsPrompt = "You are EVA Device Automation Agent. Output ONLY JSON tool call. For final done, summarize what action was performed (e.g. 'Opened the video' or 'All set'). Do NOT use emojis.",
                 temperatureOverride = 0.1f,
                 maxTokensOverride = 120
             )
 
             val toolCall = aiResponse.toolCall
             if (toolCall == null || toolCall.toolName.lowercase() == "done") {
-                val sum = toolCall?.parameters?.get("summary") ?: aiResponse.content.ifBlank { "All set for you! 💛" }
+                var sum = (toolCall?.parameters?.get("summary") ?: aiResponse.content)
+                    .replace("💛", "")
+                    .replace("✨", "")
+                    .trim()
+                if (sum.isBlank() || sum.equals("Done!", ignoreCase = true) || sum.equals("Done", ignoreCase = true)) {
+                    sum = if (goal.isNotBlank()) "Completed task: $goal" else "All set for you."
+                }
                 finalSummary = sum
                 break
             }
@@ -521,7 +571,7 @@ class CommandDispatcher(
                             continue
                         }
                     }
-                    finalSummary = "All set! Completed all available actions for: $goal 💛"
+                    finalSummary = "Completed all available actions for: $goal"
                     break
                 }
             } else {

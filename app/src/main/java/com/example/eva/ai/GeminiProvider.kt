@@ -59,11 +59,20 @@ class GeminiProvider(
 
         for (msg in messages) {
             val role = if (msg.role == "assistant") "model" else "user"
+            val partsArray = JSONArray()
+            if (msg.imageBase64 != null) {
+                partsArray.put(JSONObject().apply {
+                    put("inline_data", JSONObject().apply {
+                        put("mime_type", "image/jpeg")
+                        put("data", msg.imageBase64)
+                    })
+                })
+            }
+            partsArray.put(JSONObject().apply { put("text", msg.content) })
+
             val contentObj = JSONObject().apply {
                 put("role", role)
-                put("parts", JSONArray().apply {
-                    put(JSONObject().apply { put("text", msg.content) })
-                })
+                put("parts", partsArray)
             }
             contentsArray.put(contentObj)
         }

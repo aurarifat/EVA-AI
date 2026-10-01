@@ -186,7 +186,7 @@ class EvaViewModel(application: Application) : AndroidViewModel(application) {
         if (s.wakeWordChimeEnabled) {
             WakeWordFeedback.playChime(getApplication())
         }
-        _statusBanner.value = "Hi! 💛 Listening for command..."
+        _statusBanner.value = "Hi! Listening for command..."
 
         if (s.wakeWordHandsFreeSpeech) {
             val readyPhrase = VoicePersonality.getWakeWordReadyPhrase()

@@ -325,10 +325,20 @@ class TelegramBotManager(
                     val result = commandDispatcher.processCommand(text)
 
                     val replyContent = buildString {
-                        append(result.spokenResponse)
-                        if (!result.toolResult.isNullOrBlank()) {
+                        val cleanSpoken = result.spokenResponse.replace("💛", "").replace("✨", "").trim()
+                        append(cleanSpoken)
+                        val toolRes = result.toolResult?.replace("💛", "")?.replace("✨", "")?.trim()
+                        if (!toolRes.isNullOrBlank() &&
+                            toolRes != cleanSpoken &&
+                            !toolRes.equals("Done!", ignoreCase = true) &&
+                            !cleanSpoken.contains(toolRes, ignoreCase = true) &&
+                            result.toolName != null &&
+                            result.toolName != "chat" &&
+                            result.toolName != "fast_agent" &&
+                            result.toolName != "agent_executor"
+                        ) {
                             append("\n\n🛠️ _Tool Result_: ")
-                            append(result.toolResult)
+                            append(toolRes)
                         }
                     }
 

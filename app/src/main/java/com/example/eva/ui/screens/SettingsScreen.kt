@@ -466,7 +466,7 @@ fun SettingsScreen(
                             border = androidx.compose.foundation.BorderStroke(1.dp, EvaYellowPrimary.copy(alpha = 0.3f))
                         ) {
                             Text(
-                                text = "Warm & Sweet 💛",
+                                text = "Warm & Natural",
                                 color = EvaYellowPrimary,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
@@ -476,7 +476,7 @@ fun SettingsScreen(
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "EVA replies warmly, sweetly, and concisely by default — like a caring close friend, never stiff or corporate. Confirmation phrases are short and affectionate (e.g. \"Done! 💛\", \"All set for you.\").",
+                        text = "EVA replies warmly, naturally, and concisely by default — like a helpful friend, never stiff or robotic. Confirmation phrases are short and clear (e.g. \"Done!\", \"All set for you.\"). Emojis are excluded from spoken speech to keep audio crystal clear.",
                         color = EvaTextSecondary,
                         fontSize = 12.sp,
                         lineHeight = 17.sp

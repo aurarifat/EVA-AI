@@ -83,6 +83,8 @@ class EvaOverlayService : Service() {
     val uiState = _uiState.asStateFlow()
 
     // Core capabilities & tools
+    private lateinit var orchestrator: com.example.eva.agent.EvaAgentOrchestrator
+    private lateinit var broadcastManager: com.example.eva.screen.ScreenBroadcastManager
     private lateinit var shizukuManager: ShizukuManager
     private lateinit var screenAutomation: DeviceScreenAutomation
     private lateinit var speechRecognizer: EvaSpeechRecognizer
@@ -99,6 +101,7 @@ class EvaOverlayService : Service() {
         private const val TAG = "EvaOverlayService"
         const val ACTION_START_OVERLAY = "com.example.eva.action.START_OVERLAY"
         const val ACTION_STOP_OVERLAY = "com.example.eva.action.STOP_OVERLAY"
+        const val ACTION_STOP_BROADCAST = "com.example.eva.action.STOP_BROADCAST"
         private const val NOTIFICATION_CHANNEL_ID = "eva_overlay_channel"
         private const val NOTIFICATION_ID = 2001
 
@@ -193,6 +196,12 @@ class EvaOverlayService : Service() {
                 stopSelf()
                 return START_NOT_STICKY
             }
+            ACTION_STOP_BROADCAST -> {
+                if (::broadcastManager.isInitialized) {
+                    broadcastManager.stopBroadcast()
+                }
+                startForegroundNotification()
+            }
             else -> {
                 // Ensure foreground notification stays refreshed
                 startForegroundNotification()
@@ -209,6 +218,12 @@ class EvaOverlayService : Service() {
         shizukuManager = ShizukuManager(app)
         screenAutomation = DeviceScreenAutomation(app, shizukuManager)
         val adbCap = AdbCapabilityManager(app, shizukuManager)
+
+        orchestrator = com.example.eva.agent.EvaAgentOrchestrator.getInstance(app)
+        broadcastManager = com.example.eva.screen.ScreenBroadcastManager.getInstance(app)
+        broadcastManager.onBroadcastStateChanged = {
+            startForegroundNotification()
+        }
 
         val deviceTools = DeviceTools(app)
         val appLauncher = AppLauncherTools(app)
@@ -245,6 +260,78 @@ class EvaOverlayService : Service() {
 
         speechRecognizer = EvaSpeechRecognizer(app)
         tts = EvaTextToSpeech(app)
+
+        // Observe Orchestrator shared agent states
+        serviceScope.launch {
+            orchestrator.activeMode.collect { mode ->
+                _uiState.update { it.copy(agentMode = mode) }
+            }
+        }
+        serviceScope.launch {
+            orchestrator.conversationHistory.collect { history ->
+                _uiState.update { it.copy(conversationHistory = history) }
+            }
+        }
+        serviceScope.launch {
+            orchestrator.currentTask.collect { task ->
+                _uiState.update { it.copy(currentTask = task) }
+            }
+        }
+        serviceScope.launch {
+            orchestrator.visualState.collect { vs ->
+                _uiState.update {
+                    it.copy(
+                        statusText = vs.label,
+                        isProcessing = vs == com.example.eva.agent.OrchestratorVisualState.THINKING ||
+                                vs == com.example.eva.agent.OrchestratorVisualState.EXECUTING
+                    )
+                }
+            }
+        }
+        serviceScope.launch {
+            orchestrator.pendingConfirmationAction.collect { pending ->
+                _uiState.update { it.copy(pendingConfirmation = pending?.first) }
+            }
+        }
+        serviceScope.launch {
+            orchestrator.isPaused.collect { paused ->
+                _uiState.update { it.copy(isSessionPaused = paused) }
+            }
+        }
+        serviceScope.launch {
+            orchestrator.isSpeaking.collect { speaking ->
+                _uiState.update {
+                    it.copy(
+                        mode = if (speaking) BubbleMode.SPEAKING else if (it.mode == BubbleMode.SPEAKING) BubbleMode.IDLE else it.mode
+                    )
+                }
+            }
+        }
+        serviceScope.launch {
+            orchestrator.lastSpokenText.collect { spoken ->
+                if (spoken.isNotBlank()) {
+                    _uiState.update { it.copy(spokenText = spoken) }
+                }
+            }
+        }
+
+        // Observe Screen Broadcast States
+        serviceScope.launch {
+            broadcastManager.isBroadcasting.collect { broadcasting ->
+                _uiState.update { it.copy(isScreenBroadcasting = broadcasting) }
+                startForegroundNotification()
+            }
+        }
+        serviceScope.launch {
+            broadcastManager.isPaused.collect { isPaused ->
+                _uiState.update { it.copy(isBroadcastPaused = isPaused) }
+            }
+        }
+        serviceScope.launch {
+            broadcastManager.latestThumbnail.collect { thumb ->
+                _uiState.update { it.copy(latestThumbnail = thumb) }
+            }
+        }
 
         // Observe Shizuku connection state
         serviceScope.launch {
@@ -314,22 +401,42 @@ class EvaOverlayService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        val title = if (wakeWordActive) "EVA AI Assistant Active" else "EVA Display Overlay Active"
-        val content = if (wakeWordActive) "EVA AI is listening for 'Hi EVA'" else "Persistent assistant bubble is active. Tap to interact."
+        val isBroadcasting = ::broadcastManager.isInitialized && broadcastManager.isBroadcasting.value
+        val title = when {
+            isBroadcasting -> "EVA Live Screen Broadcast Active"
+            wakeWordActive -> "EVA AI Assistant Active"
+            else -> "EVA Display Overlay Active"
+        }
+        val content = when {
+            isBroadcasting -> "Screen broadcasting to EVA Vision Agent • Tap to view"
+            wakeWordActive -> "EVA AI is listening for 'Hi EVA'"
+            else -> "Persistent assistant bubble is active across apps. Tap to interact."
+        }
 
-        val notification: Notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(content)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentIntent(pendingIntent)
-            .addAction(
-                R.drawable.ic_launcher_foreground,
-                "Open EVA App",
-                pendingIntent
-            )
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build()
+
+        if (isBroadcasting) {
+            val stopBroadcastIntent = Intent(this, EvaOverlayService::class.java).apply {
+                action = ACTION_STOP_BROADCAST
+            }
+            val stopBroadcastPending = PendingIntent.getService(
+                this,
+                101,
+                stopBroadcastIntent,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            builder.addAction(R.drawable.ic_launcher_foreground, "Stop Screen Share", stopBroadcastPending)
+        } else {
+            builder.addAction(R.drawable.ic_launcher_foreground, "Open EVA App", pendingIntent)
+        }
+
+        val notification: Notification = builder.build()
 
         try {
             val hasMicPermission = androidx.core.content.ContextCompat.checkSelfPermission(
@@ -338,15 +445,24 @@ class EvaOverlayService : Service() {
             ) == android.content.pm.PackageManager.PERMISSION_GRANTED
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                val fgsType = if (hasMicPermission && wakeWordActive) {
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-                } else {
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                var fgsType = ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                if (hasMicPermission && wakeWordActive) {
+                    fgsType = fgsType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                }
+                if (isBroadcasting) {
+                    fgsType = fgsType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
                 }
                 startForeground(NOTIFICATION_ID, notification, fgsType)
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                var fgsType = 0
                 if (hasMicPermission && wakeWordActive) {
-                    startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+                    fgsType = fgsType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                }
+                if (isBroadcasting && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    fgsType = fgsType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                }
+                if (fgsType != 0) {
+                    startForeground(NOTIFICATION_ID, notification, fgsType)
                 } else {
                     startForeground(NOTIFICATION_ID, notification)
                 }
@@ -421,7 +537,32 @@ class EvaOverlayService : Service() {
                     onQuickAction = { action -> executeAction(action) },
                     onOpenApp = { openFullApp() },
                     onCloseOverlay = { stopSelf() },
-                    onRequestInputFocus = { focusable -> setFocusable(focusable) }
+                    onRequestInputFocus = { focusable -> setFocusable(focusable) },
+                    onSwitchAgentMode = { mode -> orchestrator.switchAgentMode(mode) },
+                    onToggleBroadcast = {
+                        if (broadcastManager.isBroadcasting.value) {
+                            broadcastManager.stopBroadcast()
+                        } else {
+                            com.example.eva.screen.ScreenCapturePermissionActivity.launch(this@EvaOverlayService)
+                        }
+                    },
+                    onPauseBroadcast = {
+                        if (broadcastManager.isPaused.value) {
+                            broadcastManager.resumeBroadcast()
+                        } else {
+                            broadcastManager.pauseBroadcast()
+                        }
+                    },
+                    onPauseSession = {
+                        if (_uiState.value.isSessionPaused) {
+                            orchestrator.resumeSession()
+                        } else {
+                            orchestrator.pauseSession()
+                        }
+                    },
+                    onConfirmAction = { orchestrator.confirmPendingAction() },
+                    onCancelAction = { orchestrator.cancelPendingAction() },
+                    onClearHistory = { orchestrator.clearSessionHistory() }
                 )
             }
         }
@@ -544,7 +685,7 @@ class EvaOverlayService : Service() {
             it.copy(
                 isWakeWordHighlight = true,
                 mode = BubbleMode.SPEAKING,
-                statusText = "Hi! 💛"
+                statusText = "Hi! Ready"
             )
         }
 
@@ -566,7 +707,7 @@ class EvaOverlayService : Service() {
         _uiState.update {
             it.copy(
                 mode = BubbleMode.LISTENING,
-                statusText = "Listening for command... 💛",
+                statusText = "Listening for command...",
                 recognizedText = ""
             )
         }
@@ -675,105 +816,36 @@ class EvaOverlayService : Service() {
             return
         }
 
+        val cmd = rawCommand.trim()
+        val lower = cmd.lowercase()
+
         _uiState.update {
             it.copy(
                 mode = BubbleMode.IDLE,
                 isProcessing = true,
                 statusText = "Thinking...",
-                recognizedText = rawCommand
+                recognizedText = cmd
             )
         }
 
         serviceScope.launch {
-            val cmd = rawCommand.trim()
-            val lower = cmd.lowercase()
-
-            val responseText: String = when {
-                // "Open Adguard" or "Launch Adguard"
-                lower.contains("open adguard") || lower.contains("launch adguard") -> {
-                    _uiState.update { it.copy(statusText = "Opening AdGuard...") }
-                    val (ok, msg) = screenAutomation.launchApp("AdGuard")
-                    if (ok) "Opened AdGuard for you! 💛" else msg
-                }
-                // "Close ads", "close ad", "skip ad"
-                lower.contains("close ad") || lower.contains("close ads") || lower.contains("skip ad") -> {
-                    _uiState.update { it.copy(statusText = "Closing ads...") }
-                    val (ok, msg) = screenAutomation.closeAds()
-                    if (ok) "Closed the ad! 💛" else msg
-                }
-                // "Turn the protection on", "turn on protection", "enable protection"
-                lower.contains("protection on") || lower.contains("turn on protection") ||
-                        lower.contains("turn the protection on") || lower.contains("enable protection") -> {
-                    _uiState.update { it.copy(statusText = "Turning protection on...") }
-                    val (ok, msg) = screenAutomation.turnProtectionOn()
-                    if (ok) "Protection is turned on for you! 💛" else msg
-                }
-                // Whole-device gestures & taps
-                lower.startsWith("click ") || lower.startsWith("tap ") -> {
-                    val query = cmd.substringAfter(" ").trim()
-                    _uiState.update { it.copy(statusText = "Tapping '$query'...") }
-                    val (_, msg) = screenAutomation.clickByText(query)
-                    msg
-                }
-                lower.contains("scroll down") -> {
-                    screenAutomation.scrollDown()
-                    "Scrolled down for you! 💛"
-                }
-                lower.contains("scroll up") -> {
-                    screenAutomation.scrollUp()
-                    "Scrolled up for you! 💛"
-                }
-                lower.contains("slide left") || lower.contains("swipe left") -> {
-                    screenAutomation.slideLeft()
-                    "Slid left for you! 💛"
-                }
-                lower.contains("slide right") || lower.contains("swipe right") -> {
-                    screenAutomation.slideRight()
-                    "Slid right for you! 💛"
-                }
+            when {
                 // Toggle Home Screen
                 lower == "home" || lower == "go home" || lower.contains("toggle home") || lower.contains("home screen") || lower == "toggle to home" -> {
                     toggleToHomeScreen()
-                    "Switched to home screen! 💛"
                 }
                 // Open full EVA application
                 lower.contains("open app") || lower.contains("open eva") || lower.contains("open settings") -> {
                     openFullApp()
-                    "Opened EVA app for you! 💛"
                 }
                 // Close overlay
                 lower.contains("close overlay") || lower.contains("exit overlay") || lower.contains("hide overlay") -> {
                     stopSelf()
-                    return@launch
                 }
-                // General assistant conversational command
+                // All other commands, queries, tasks routed to shared persistent orchestrator
                 else -> {
-                    val res = commandDispatcher.processCommand(cmd)
-                    res.spokenResponse
+                    orchestrator.enqueueCommand(cmd)
                 }
-            }
-
-            // Transition to SPEAKING mode while preserving overlay visibility
-            _uiState.update {
-                it.copy(
-                    mode = BubbleMode.SPEAKING,
-                    statusText = "Speaking...",
-                    spokenText = responseText,
-                    isProcessing = false
-                )
-            }
-
-            tts.speak(responseText) {
-                // When TTS completes, return to wake-word / IDLE mode ready for next commands
-                serviceScope.launch(Dispatchers.Main) {
-                    returnToWakeWordMode()
-                }
-            }
-
-            // Fallback timer if TTS utterance progress listener fails to fire
-            delay(4000)
-            if (_uiState.value.mode == BubbleMode.SPEAKING) {
-                returnToWakeWordMode()
             }
         }
     }

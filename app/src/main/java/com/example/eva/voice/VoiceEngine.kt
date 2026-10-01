@@ -276,8 +276,27 @@ class EvaTextToSpeech(private val context: Context) {
         }
     }
 
+    companion object {
+        fun sanitizeForSpeech(raw: String): String {
+            if (raw.isBlank()) return ""
+            return raw
+                // Strip emoji unicode blocks, pictographs, decorative symbols (e.g. 💛, ✨, 🛠️, etc.)
+                .replace(Regex("[\\p{So}\\p{Cn}\\uD83C-\\uDBFF\\uDC00-\\uDFFF\\u2600-\\u26FF\\u2700-\\u27BF]"), "")
+                .replace("💛", "")
+                .replace("✨", "")
+                .replace("❤️", "")
+                .replace("🛠️", "")
+                // Strip markdown formatting symbols like **, ##, ```, and bullet points
+                .replace(Regex("[*#`_~•\\[\\](){}]"), " ")
+                // Collapse duplicate whitespace
+                .replace(Regex("\\s+"), " ")
+                .trim()
+        }
+    }
+
     fun speak(text: String, onDone: (() -> Unit)? = null) {
-        if (text.isBlank()) {
+        val cleanSpeech = sanitizeForSpeech(text)
+        if (cleanSpeech.isBlank()) {
             onDone?.invoke()
             return
         }
@@ -291,7 +310,7 @@ class EvaTextToSpeech(private val context: Context) {
             if (onDone != null) {
                 utteranceCallbacks[utteranceId] = onDone
             }
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+            tts?.speak(cleanSpeech, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
         }
     }
 

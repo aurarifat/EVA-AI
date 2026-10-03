@@ -34,6 +34,7 @@ import com.example.eva.telegram.TelegramBotInfo
 import com.example.eva.telegram.TelegramBotManager
 import com.example.eva.telegram.TelegramBotService
 import com.example.eva.telegram.TelegramBotStatus
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.Calendar
@@ -139,17 +140,15 @@ class EvaViewModel(application: Application) : AndroidViewModel(application) {
     private val _statusBanner = MutableStateFlow<String?>(null)
     val statusBanner: StateFlow<String?> = _statusBanner.asStateFlow()
 
-    private var inAppWakeWordListener: WakeWordListener? = null
-
     init {
-        // Observe settings changes to reconfigure TTS and manage in-app wake word & Telegram service
+        // Observe settings changes to reconfigure TTS and manage wake word & Telegram service
         viewModelScope.launch {
             settingsState.collect { s ->
                 tts.configure(s.voiceSpeed, s.voicePitch, s.voiceLanguage)
-                if (s.wakeWordEnabled && EvaOverlayService.activeInstance == null) {
-                    startInAppWakeWordListener()
-                } else if (!s.wakeWordEnabled || EvaOverlayService.activeInstance != null) {
-                    stopInAppWakeWordListener()
+                if (s.wakeWordEnabled && EvaOverlayService.activeInstance == null && !WakeWordDetectionService.isRunning) {
+                    WakeWordDetectionService.startService(application)
+                } else if (!s.wakeWordEnabled) {
+                    WakeWordDetectionService.stopService(application)
                 }
 
                 if (s.telegramEnabled && keyStore.hasTelegramToken()) {
@@ -159,42 +158,28 @@ class EvaViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+
+        // Register foreground wake trigger callback with WakeWordDetectionService
+        WakeWordDetectionService.onForegroundWakeTriggered = {
+            handleInAppWakeWordTriggered()
+        }
+
         shizukuManager.checkStatus()
     }
 
-    private fun startInAppWakeWordListener() {
-        if (inAppWakeWordListener == null) {
-            inAppWakeWordListener = WakeWordListener(
-                context = getApplication(),
-                onWakeWordDetected = {
-                    handleInAppWakeWordTriggered()
-                }
-            )
-        }
-        inAppWakeWordListener?.startListening()
-    }
-
-    private fun stopInAppWakeWordListener() {
-        inAppWakeWordListener?.stopListening()
-        inAppWakeWordListener = null
-    }
-
     private fun handleInAppWakeWordTriggered() {
-        inAppWakeWordListener?.pauseListening()
-        val s = settingsState.value
-        WakeWordFeedback.triggerHaptic(getApplication())
-        if (s.wakeWordChimeEnabled) {
-            WakeWordFeedback.playChime(getApplication())
-        }
-        _statusBanner.value = "Hi! Listening for command..."
+        viewModelScope.launch(Dispatchers.Main) {
+            _statusBanner.value = "Hey EVA detected! Listening for command..."
 
-        if (s.wakeWordHandsFreeSpeech) {
-            val readyPhrase = VoicePersonality.getWakeWordReadyPhrase()
-            tts.speak(readyPhrase) {
+            val s = settingsState.value
+            if (s.wakeWordHandsFreeSpeech) {
+                val readyPhrase = VoicePersonality.getWakeWordReadyPhrase()
+                tts.speak(readyPhrase) {
+                    startVoiceListeningForCommand()
+                }
+            } else {
                 startVoiceListeningForCommand()
             }
-        } else {
-            startVoiceListeningForCommand()
         }
     }
 
@@ -204,16 +189,11 @@ class EvaViewModel(application: Application) : AndroidViewModel(application) {
             speechRecognizer.startListening(
                 language = s.voiceLanguage,
                 onResult = { spoken ->
+                    _statusBanner.value = null
                     processCommand(spoken)
-                    if (s.wakeWordEnabled && EvaOverlayService.activeInstance == null) {
-                        inAppWakeWordListener?.resumeListening()
-                    }
                 },
                 onError = {
                     _statusBanner.value = null
-                    if (s.wakeWordEnabled && EvaOverlayService.activeInstance == null) {
-                        inAppWakeWordListener?.resumeListening()
-                    }
                 }
             )
         }
@@ -236,7 +216,6 @@ class EvaViewModel(application: Application) : AndroidViewModel(application) {
     fun setWakeWordSensitivity(sensitivity: Float) {
         viewModelScope.launch {
             preferences.setWakeWordSensitivity(sensitivity)
-            inAppWakeWordListener?.updateSensitivity(sensitivity)
         }
     }
 
@@ -561,7 +540,7 @@ class EvaViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
-        stopInAppWakeWordListener()
+        WakeWordDetectionService.onForegroundWakeTriggered = null
         speechRecognizer.stopListening()
         tts.shutdown()
         shizukuManager.cleanup()

@@ -333,8 +333,8 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Hands-Free Voice Wake ('Hi EVA')", color = EvaTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                            Text("Continuous on-device acoustic model triggers voice listening anywhere.", color = EvaTextSecondary, fontSize = 11.sp)
+                            Text("Hands-Free Voice Wake ('Hey EVA')", color = EvaTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            Text("Local, low-latency acoustic model runs 100% on-device. Say 'Hey EVA' to wake up.", color = EvaTextSecondary, fontSize = 11.sp)
                         }
                         Switch(
                             checked = wakeWordEnabled,
@@ -342,9 +342,9 @@ fun SettingsScreen(
                                 wakeWordEnabled = enabled
                                 viewModel.setWakeWordEnabled(enabled)
                                 if (enabled) {
-                                    Toast.makeText(context, "Local wake-word model active: Say 'Hi EVA'", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "Local model active: Say 'Hey EVA'", Toast.LENGTH_SHORT).show()
                                 } else {
-                                    Toast.makeText(context, "Wake-word model stopped", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "Wake-word engine stopped", Toast.LENGTH_SHORT).show()
                                 }
                             },
                             colors = SwitchDefaults.colors(checkedThumbColor = EvaYellowPrimary, checkedTrackColor = Color(0xFF2A2312))
@@ -430,7 +430,7 @@ fun SettingsScreen(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = if (wakeWordEnabled) "Local Model Active • Listening for 'Hi EVA' • 100% Offline" else "Wake word detection is currently turned off",
+                                text = if (wakeWordEnabled) "Local Model Active • Listening for 'Hey EVA' • 100% Offline" else "Wake word detection is currently turned off",
                                 color = if (wakeWordEnabled) EvaSuccessGreen else EvaTextTertiary,
                                 fontSize = 11.sp,
                                 fontWeight = if (wakeWordEnabled) FontWeight.SemiBold else FontWeight.Normal

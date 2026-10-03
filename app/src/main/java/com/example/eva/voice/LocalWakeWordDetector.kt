@@ -20,8 +20,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Local Wake-Word Detection Engine.
- * Streams microphone PCM audio into [LocalWakeWordModel] completely offline without any network traffic.
- * Implements real-time Voice Activity Detection (VAD) and temporal keyword spotting for "Hi EVA".
+ * Streams raw microphone PCM audio into [LocalWakeWordModel] completely offline without any network traffic.
+ * Features acoustic self-suppression (muting during assistant speech), low power consumption, and zero cloud latency.
  */
 class LocalWakeWordDetector(
     private val context: Context,
@@ -41,6 +41,9 @@ class LocalWakeWordDetector(
 
     private val isRunning = AtomicBoolean(false)
     private val isPaused = AtomicBoolean(false)
+    private val isMuted = AtomicBoolean(false)
+    private var muteRunnable: Runnable? = null
+
     private var recordingThread: Thread? = null
     private var audioRecord: AudioRecord? = null
 
@@ -51,8 +54,29 @@ class LocalWakeWordDetector(
     val rmsLevel: StateFlow<Float> = _rmsLevel.asStateFlow()
 
     fun updateSensitivity(newSensitivity: Float) {
-        this.sensitivity = newSensitivity.coerceIn(0.1f, 1.0f)
+        this.sensitivity = newSensitivity.coerceIn(0.2f, 0.85f)
         model.sensitivity = this.sensitivity
+    }
+
+    /**
+     * Temporarily mutes wake-word detection for [durationMs] (e.g. while EVA is speaking or chiming).
+     */
+    fun mute(durationMs: Long = 3000L) {
+        isMuted.set(true)
+        model.reset()
+        muteRunnable?.let { mainHandler.removeCallbacks(it) }
+        val runnable = Runnable {
+            isMuted.set(false)
+            model.reset()
+        }
+        muteRunnable = runnable
+        mainHandler.postDelayed(runnable, durationMs)
+    }
+
+    fun unmute() {
+        muteRunnable?.let { mainHandler.removeCallbacks(it) }
+        isMuted.set(false)
+        model.reset()
     }
 
     fun start() {
@@ -61,6 +85,7 @@ class LocalWakeWordDetector(
             return
         }
         isPaused.set(false)
+        isMuted.set(false)
         model.reset()
         startAudioCaptureThread()
     }
@@ -70,6 +95,7 @@ class LocalWakeWordDetector(
             return
         }
         isPaused.set(false)
+        unmute()
         stopAudioCaptureThread()
         _isListening.value = false
         _rmsLevel.value = 0f
@@ -155,18 +181,31 @@ class LocalWakeWordDetector(
 
             recordingThread = Thread({
                 Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
-                val frameBuffer = ShortArray(LocalWakeWordModel.FRAME_SIZE)
+
+                val hopSize = LocalWakeWordModel.HOP_SIZE
+                val frameSize = LocalWakeWordModel.FRAME_SIZE
+                val slidingWindow = ShortArray(frameSize)
+                val readBuffer = ShortArray(hopSize)
                 var lastUiRmsTime = 0L
 
                 while (isRunning.get() && !isPaused.get()) {
-                    val readSamples = record.read(frameBuffer, 0, frameBuffer.size)
+                    val readSamples = record.read(readBuffer, 0, readBuffer.size)
                     if (readSamples <= 0) {
                         Thread.sleep(16)
                         continue
                     }
 
-                    // Extract features using local acoustic model
-                    val features = model.extractFeatures(frameBuffer)
+                    // Shift sliding window by hopSize and append newly read samples
+                    System.arraycopy(slidingWindow, hopSize, slidingWindow, 0, frameSize - hopSize)
+                    System.arraycopy(readBuffer, 0, slidingWindow, frameSize - hopSize, hopSize)
+
+                    // If muted (EVA speaking, chiming, etc.), skip detection to avoid echo loops
+                    if (isMuted.get()) {
+                        continue
+                    }
+
+                    // Extract acoustic features
+                    val features = model.extractFeatures(slidingWindow)
 
                     // Throttle UI RMS updates to ~20Hz
                     val now = System.currentTimeMillis()
@@ -179,8 +218,10 @@ class LocalWakeWordDetector(
                     val (isDetected, confidence) = model.processFrame(features)
                     if (isDetected) {
                         Log.i(TAG, ">>> Local Model Wake Word Fired! Confidence: $confidence <<<")
+                        // Mute temporarily to avoid self-triggering on chime/response
+                        mute(3200L)
                         mainHandler.post {
-                            onWakeWordDetected("Hi EVA", confidence)
+                            onWakeWordDetected("Hey EVA", confidence)
                         }
                     }
                 }

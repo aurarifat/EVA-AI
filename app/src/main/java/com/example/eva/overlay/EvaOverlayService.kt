@@ -92,9 +92,10 @@ class EvaOverlayService : Service() {
     private lateinit var commandDispatcher: CommandDispatcher
     private lateinit var preferences: EvaPreferences
 
-    // Wake Word Listener ("Hi EVA")
+    // Wake Word Listener ("Hey EVA")
     private var wakeWordListener: WakeWordListener? = null
     private var isWakeWordActive = false
+    private var isWakeWordChimeEnabled = true
     private var followUpTimeoutJob: Job? = null
 
     companion object {
@@ -102,6 +103,9 @@ class EvaOverlayService : Service() {
         const val ACTION_START_OVERLAY = "com.example.eva.action.START_OVERLAY"
         const val ACTION_STOP_OVERLAY = "com.example.eva.action.STOP_OVERLAY"
         const val ACTION_STOP_BROADCAST = "com.example.eva.action.STOP_BROADCAST"
+        const val ACTION_START_BROADCAST = "com.example.eva.action.START_BROADCAST"
+        const val EXTRA_RESULT_CODE = "extra_result_code"
+        const val EXTRA_RESULT_DATA = "extra_result_data"
         private const val NOTIFICATION_CHANNEL_ID = "eva_overlay_channel"
         private const val NOTIFICATION_ID = 2001
 
@@ -175,6 +179,9 @@ class EvaOverlayService : Service() {
         super.onCreate()
         activeInstance = this
         try {
+            // Stop separate WakeWordDetectionService so there is no microphone contention
+            com.example.eva.voice.WakeWordDetectionService.stopService(this)
+
             createNotificationChannel()
             initDependencies()
             startForegroundNotification(isWakeWordActive)
@@ -195,6 +202,26 @@ class EvaOverlayService : Service() {
             ACTION_STOP_OVERLAY -> {
                 stopSelf()
                 return START_NOT_STICKY
+            }
+            ACTION_START_BROADCAST -> {
+                val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, android.app.Activity.RESULT_CANCELED)
+                val resultData: Intent? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(EXTRA_RESULT_DATA)
+                }
+                startForegroundNotification(isBroadcastingOverride = true)
+                if (::broadcastManager.isInitialized) {
+                    if (broadcastManager.isBroadcasting.value) {
+                        _uiState.update { it.copy(isScreenBroadcasting = true, isBroadcastPaused = false) }
+                    } else if (resultCode == android.app.Activity.RESULT_OK && resultData != null) {
+                        val ok = broadcastManager.startBroadcast(resultCode, resultData)
+                        if (ok) {
+                            _uiState.update { it.copy(isScreenBroadcasting = true, isBroadcastPaused = false) }
+                        }
+                    }
+                }
             }
             ACTION_STOP_BROADCAST -> {
                 if (::broadcastManager.isInitialized) {
@@ -356,9 +383,10 @@ class EvaOverlayService : Service() {
             }
         }
 
-        // Observe Wake Word configuration ("Hi EVA")
+        // Observe Wake Word configuration ("Hey EVA")
         serviceScope.launch {
             preferences.settingsFlow.collect { s ->
+                isWakeWordChimeEnabled = s.wakeWordChimeEnabled
                 val wakeEnabled = s.wakeWordEnabled
                 if (wakeEnabled != isWakeWordActive) {
                     isWakeWordActive = wakeEnabled
@@ -389,7 +417,10 @@ class EvaOverlayService : Service() {
         }
     }
 
-    private fun startForegroundNotification(wakeWordActive: Boolean = isWakeWordActive) {
+    fun startForegroundNotification(
+        wakeWordActive: Boolean = isWakeWordActive,
+        isBroadcastingOverride: Boolean = false
+    ) {
         val openAppIntent = Intent(this, MainActivity::class.java).apply {
             putExtra(MainActivity.EXTRA_MANUAL_OPEN, true)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -401,7 +432,7 @@ class EvaOverlayService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        val isBroadcasting = ::broadcastManager.isInitialized && broadcastManager.isBroadcasting.value
+        val isBroadcasting = isBroadcastingOverride || (::broadcastManager.isInitialized && broadcastManager.isBroadcasting.value)
         val title = when {
             isBroadcasting -> "EVA Live Screen Broadcast Active"
             wakeWordActive -> "EVA AI Assistant Active"
@@ -409,7 +440,7 @@ class EvaOverlayService : Service() {
         }
         val content = when {
             isBroadcasting -> "Screen broadcasting to EVA Vision Agent • Tap to view"
-            wakeWordActive -> "EVA AI is listening for 'Hi EVA'"
+            wakeWordActive -> "EVA AI is listening for 'Hey EVA'"
             else -> "Persistent assistant bubble is active across apps. Tap to interact."
         }
 
@@ -625,10 +656,9 @@ class EvaOverlayService : Service() {
 
         when (currentState.mode) {
             BubbleMode.IDLE -> {
-                // Tapping the bubble toggles the quick dock right on the current screen
-                val nextExpanded = !currentState.isExpanded
-                _uiState.update { it.copy(isExpanded = nextExpanded) }
-                if (!nextExpanded) setFocusable(false)
+                // Tapping the bubble expands the dock UI and immediately starts listening to user's voice command
+                _uiState.update { it.copy(isExpanded = true) }
+                startListeningMode()
             }
             BubbleMode.LISTENING -> {
                 stopListeningMode()
@@ -645,6 +675,12 @@ class EvaOverlayService : Service() {
         }
     }
 
+    fun triggerWakeWordFromExternal() {
+        serviceScope.launch(Dispatchers.Main) {
+            handleWakeWordTriggered()
+        }
+    }
+
     private fun startWakeWordEngine() {
         if (wakeWordListener == null) {
             wakeWordListener = WakeWordListener(
@@ -657,7 +693,7 @@ class EvaOverlayService : Service() {
         wakeWordListener?.startListening()
         _uiState.update {
             it.copy(
-                statusText = if (it.mode == BubbleMode.IDLE) "EVA AI is listening for 'Hi EVA'" else it.statusText
+                statusText = if (it.mode == BubbleMode.IDLE) "EVA AI is listening for 'Hey EVA'" else it.statusText
             )
         }
     }
@@ -674,11 +710,15 @@ class EvaOverlayService : Service() {
 
     private fun handleWakeWordTriggered() {
         Log.d(TAG, "Wake word detected in EvaOverlayService! Triggering warm response flow.")
+        // Mute listener for 4 seconds to prevent self-triggering from TTS or chime
+        wakeWordListener?.mute(4000L)
         wakeWordListener?.pauseListening()
 
         // Haptic and chime
         WakeWordFeedback.triggerHaptic(this)
-        WakeWordFeedback.playChime(this)
+        if (isWakeWordChimeEnabled) {
+            WakeWordFeedback.playChime(this)
+        }
 
         // Animate / highlight bubble
         _uiState.update {
@@ -742,7 +782,7 @@ class EvaOverlayService : Service() {
         _uiState.update {
             it.copy(
                 mode = BubbleMode.IDLE,
-                statusText = if (isWakeWordActive) "EVA AI is listening for 'Hi EVA'" else "EVA Ready",
+                statusText = if (isWakeWordActive) "EVA AI is listening for 'Hey EVA'" else "EVA Ready",
                 isWakeWordHighlight = false,
                 recognizedText = "",
                 spokenText = "",
@@ -750,6 +790,7 @@ class EvaOverlayService : Service() {
             )
         }
         if (isWakeWordActive) {
+            wakeWordListener?.mute(1500L)
             wakeWordListener?.resumeListening()
         }
     }
@@ -929,6 +970,7 @@ class EvaOverlayService : Service() {
     }
 
     override fun onDestroy() {
+        val wasWakeWordActive = isWakeWordActive
         if (activeInstance == this) {
             activeInstance = null
         }
@@ -940,6 +982,10 @@ class EvaOverlayService : Service() {
             wakeWordListener = null
             speechRecognizer.stopListening()
             tts.shutdown()
+
+            if (wasWakeWordActive) {
+                com.example.eva.voice.WakeWordDetectionService.startService(applicationContext)
+            }
 
             lifecycleOwner?.onDestroy()
             lifecycleOwner = null

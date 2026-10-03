@@ -90,8 +90,8 @@ class EvaSpeechRecognizer(private val context: Context) {
                     }
 
                     override fun onRmsChanged(rmsdB: Float) {
-                        // Normalize RMS dB (typical speech range -2dB to 10dB)
-                        val normalized = ((rmsdB + 2f) / 12f).coerceIn(0f, 1f)
+                        // Normalize RMS dB with higher responsiveness for dynamic waveform visualization
+                        val normalized = ((rmsdB + 2f) / 10f).coerceIn(0f, 1f)
                         _rmsLevel.value = normalized
                     }
 
@@ -152,11 +152,13 @@ class EvaSpeechRecognizer(private val context: Context) {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE, language)
                     putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
                     putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
+                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
                     putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 2000L)
                     putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
+                    putExtra("android.speech.extra.DICTATION_MODE", true)
                 }
 
                 _voiceState.value = VoiceState.LISTENING
@@ -233,8 +235,32 @@ class EvaTextToSpeech(private val context: Context) {
                 if (status == TextToSpeech.SUCCESS) {
                     isInitialized = true
                     tts?.language = Locale.US
-                    tts?.setPitch(1.05f) // Warm, gentle slightly elevated pitch
-                    tts?.setSpeechRate(1.0f)
+                    tts?.setPitch(1.04f) // Warm, sweet, natural slightly elevated pitch
+                    tts?.setSpeechRate(1.02f) // Fluid, natural pacing
+
+                    // Select highest quality natural human female voice if available
+                    try {
+                        val availableVoices = tts?.voices
+                        if (!availableVoices.isNullOrEmpty()) {
+                            val bestVoice = availableVoices.firstOrNull { v ->
+                                v.locale.language == Locale.US.language &&
+                                !v.isNetworkConnectionRequired &&
+                                (v.name.contains("en-us-x-sfg", ignoreCase = true) ||
+                                 v.name.contains("en-us-x-tpf", ignoreCase = true) ||
+                                 v.name.contains("en-us-x-iol", ignoreCase = true) ||
+                                 v.name.contains("female", ignoreCase = true))
+                            } ?: availableVoices.firstOrNull { v ->
+                                v.locale.language == Locale.US.language &&
+                                v.quality >= android.speech.tts.Voice.QUALITY_HIGH
+                            }
+                            if (bestVoice != null) {
+                                tts?.voice = bestVoice
+                                Log.i(TAG, "Selected enhanced natural voice: ${bestVoice.name}")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Voice enhancement fallback: ${e.message}")
+                    }
 
                     tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                         override fun onStart(utteranceId: String?) {
@@ -277,6 +303,8 @@ class EvaTextToSpeech(private val context: Context) {
     }
 
     companion object {
+        private const val TAG = "EvaTextToSpeech"
+
         fun sanitizeForSpeech(raw: String): String {
             if (raw.isBlank()) return ""
             return raw

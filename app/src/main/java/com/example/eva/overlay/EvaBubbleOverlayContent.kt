@@ -5,9 +5,12 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -180,13 +183,17 @@ fun EvaBubbleOverlayContent(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(2.dp)
         ) {
-            // Main Compact Floating Circular Orb (56.dp) with edge snap
+            val audioIntensityBoost = if (state.mode == BubbleMode.LISTENING) {
+                (state.rmsLevel.coerceIn(0f, 1f) * 0.22f)
+            } else 0f
+
+            // Main Compact Floating Circular Orb (56.dp) with edge snap & dynamic audio reactivity
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
                     .size(56.dp)
-                    .scale(pulseScale)
-                    .shadow(12.dp, CircleShape)
+                    .scale(pulseScale + audioIntensityBoost)
+                    .shadow(14.dp, CircleShape)
                     .pointerInput(Unit) {
                         awaitEachGesture {
                             val down = awaitFirstDown(requireUnconsumed = false)
@@ -223,6 +230,33 @@ fun EvaBubbleOverlayContent(
                         }
                     }
             ) {
+                // Concentric Audio Pulse Rings when Listening
+                if (state.mode == BubbleMode.LISTENING) {
+                    val pulseRingScale by infiniteTransition.animateFloat(
+                        initialValue = 1f,
+                        targetValue = 1.40f + (state.rmsLevel.coerceIn(0f, 1f) * 0.35f),
+                        animationSpec = infiniteRepeatable(tween(750, easing = FastOutSlowInEasing), RepeatMode.Restart),
+                        label = "pulse_ring"
+                    )
+                    val pulseRingAlpha by infiniteTransition.animateFloat(
+                        initialValue = 0.85f,
+                        targetValue = 0f,
+                        animationSpec = infiniteRepeatable(tween(750, easing = LinearEasing), RepeatMode.Restart),
+                        label = "pulse_alpha"
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .scale(pulseRingScale)
+                            .clip(CircleShape)
+                            .border(
+                                width = (1.5.dp + (state.rmsLevel.coerceIn(0f, 1f) * 2f).dp),
+                                color = CyanListening.copy(alpha = pulseRingAlpha),
+                                shape = CircleShape
+                            )
+                    )
+                }
+
                 // Outer Glowing Halo
                 Box(
                     modifier = Modifier
@@ -232,14 +266,14 @@ fun EvaBubbleOverlayContent(
                             when {
                                 state.isScreenBroadcasting -> BroadcastRed.copy(alpha = glowAlpha * 0.45f)
                                 state.isWakeWordHighlight -> GoldAccent.copy(alpha = 0.90f)
-                                state.mode == BubbleMode.LISTENING -> CyanListening.copy(alpha = glowAlpha * 0.45f)
+                                state.mode == BubbleMode.LISTENING -> CyanListening.copy(alpha = (glowAlpha * 0.5f) + (state.rmsLevel.coerceIn(0f, 1f) * 0.4f))
                                 state.mode == BubbleMode.SPEAKING -> EmeraldSpeaking.copy(alpha = glowAlpha * 0.40f)
                                 else -> GoldAccent.copy(alpha = glowAlpha * 0.25f)
                             }
                         )
                 )
 
-                // High-End Circular Frame with Zoomed Logo
+                // High-End Circular Frame with Special EVA Logo
                 Box(
                     modifier = Modifier
                         .size(50.dp)
@@ -255,14 +289,14 @@ fun EvaBubbleOverlayContent(
                                 )
                             )
                         )
-                        .border(1.5.dp, GoldAccent, CircleShape),
+                        .border(1.5.dp, if (state.mode == BubbleMode.LISTENING) CyanListening else GoldAccent, CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
                     Image(
-                        painter = painterResource(id = R.drawable.ic_eva_white_logo),
-                        contentDescription = "EVA Floating Agent",
+                        painter = painterResource(id = R.drawable.eva_gold_logo_1790337115749),
+                        contentDescription = "EVA Special Logo",
                         modifier = Modifier
-                            .size(36.dp)
+                            .size(38.dp)
                             .clip(CircleShape),
                         contentScale = ContentScale.Crop
                     )
@@ -364,25 +398,37 @@ fun EvaBubbleOverlayContent(
                 Column(
                     modifier = Modifier.padding(10.dp)
                 ) {
-                    // Header: Title, Active Provider, and Controls
+                    // Header: Logo, Title, Active Provider, and Controls
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
-                            Text(
-                                text = "EVA FLOATING ASSISTANT",
-                                color = GoldAccent,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = 0.6.sp
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Image(
+                                painter = painterResource(id = R.drawable.eva_gold_logo_1790337115749),
+                                contentDescription = "EVA Special Logo",
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .clip(CircleShape)
+                                    .border(1.dp, GoldAccent, CircleShape),
+                                contentScale = ContentScale.Crop
                             )
-                            Text(
-                                text = "${state.agentMode.shortName} • ${state.activeProvider.displayName}",
-                                color = SubtextGray,
-                                fontSize = 8.5.sp
-                            )
+                            Spacer(modifier = Modifier.width(7.dp))
+                            Column {
+                                Text(
+                                    text = "EVA ASSISTANT",
+                                    color = GoldAccent,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 0.6.sp
+                                )
+                                Text(
+                                    text = "${state.agentMode.shortName} • ${state.activeProvider.displayName}",
+                                    color = SubtextGray,
+                                    fontSize = 8.5.sp
+                                )
+                            }
                         }
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -638,6 +684,17 @@ fun EvaBubbleOverlayContent(
                         )
                     }
 
+                    // Dynamic Audio Waveform Visualizer Banner (Reacts when Listening or Speaking)
+                    if (state.mode == BubbleMode.LISTENING || state.mode == BubbleMode.SPEAKING) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        DynamicVoiceWaveformCard(
+                            mode = state.mode,
+                            rmsLevel = state.rmsLevel,
+                            recognizedText = state.recognizedText,
+                            spokenText = state.spokenText
+                        )
+                    }
+
                     // Persistent Conversation History (compact, scrollable)
                     if (state.conversationHistory.isNotEmpty()) {
                         Spacer(modifier = Modifier.height(6.dp))
@@ -749,7 +806,7 @@ fun EvaBubbleOverlayContent(
                         OutlinedTextField(
                             value = typedCommand,
                             onValueChange = { typedCommand = it },
-                            placeholder = { Text("Command (e.g. open WhatsApp)...", fontSize = 9.sp, color = SubtextGray) },
+                            placeholder = { Text("Command (e.g. open YouTube)...", fontSize = 9.sp, color = SubtextGray) },
                             singleLine = true,
                             maxLines = 1,
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
@@ -812,19 +869,104 @@ fun EvaBubbleOverlayContent(
 
                     Spacer(modifier = Modifier.height(6.dp))
 
-                    // Direct Quick Action Chips (WhatsApp, Home, Back, Flashlight, Volume)
+                    // Voice Quick Action Chips (Voice-First, No flashlight, No protection clutter)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        QuickActionChip("WhatsApp", "open whatsapp", onQuickAction)
                         QuickActionChip("Home", "home", onQuickAction)
+                        QuickActionChip("Battery", "what is my battery", onQuickAction)
+                        QuickActionChip("Time", "what time is it", onQuickAction)
                         QuickActionChip("Back", "now go back", onQuickAction)
-                        QuickActionChip("Torch", "flashlight", onQuickAction)
                         QuickActionChip("Clear Chat", "clear", { onClearHistory() })
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DynamicVoiceWaveformCard(
+    mode: BubbleMode,
+    rmsLevel: Float,
+    recognizedText: String,
+    spokenText: String
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "waveform_card")
+    val clampedRms = rmsLevel.coerceIn(0f, 1f)
+
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = Color(0xF0080C14),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            if (mode == BubbleMode.LISTENING) CyanListening.copy(alpha = 0.8f) else EmeraldSpeaking.copy(alpha = 0.8f)
+        ),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Live Status Text
+            Text(
+                text = if (mode == BubbleMode.LISTENING) {
+                    if (recognizedText.isNotBlank()) "\"$recognizedText\"" else "Listening... Speak your command"
+                } else {
+                    if (spokenText.isNotBlank()) spokenText else "EVA Speaking..."
+                },
+                color = if (mode == BubbleMode.LISTENING) CyanListening else EmeraldSpeaking,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // 15 Dynamic Reactive Waveform Bars
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(26.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val barCount = 15
+                for (i in 0 until barCount) {
+                    // Phase offset based on index creates realistic traveling audio wave
+                    val duration = 160 + (i % 5) * 35
+                    val baseHeight = 4f + (if (i % 2 == 0) 3f else 1.5f)
+                    val boost = if (mode == BubbleMode.LISTENING) clampedRms * 16f else 10f
+
+                    val animatedHeight by infiniteTransition.animateFloat(
+                        initialValue = baseHeight,
+                        targetValue = (baseHeight + boost * (0.6f + (i % 4) * 0.15f)).coerceIn(4f, 24f),
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(duration, easing = FastOutSlowInEasing),
+                            repeatMode = RepeatMode.Reverse
+                        ),
+                        label = "wave_bar_$i"
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .width(3.dp)
+                            .height(animatedHeight.dp)
+                            .clip(RoundedCornerShape(1.5.dp))
+                            .background(
+                                Brush.verticalGradient(
+                                    if (mode == BubbleMode.LISTENING) {
+                                        listOf(CyanListening, GoldAccent)
+                                    } else {
+                                        listOf(EmeraldSpeaking, GoldAccent)
+                                    }
+                                )
+                            )
+                    )
                 }
             }
         }
@@ -855,42 +997,55 @@ private fun QuickActionChip(
 @Composable
 private fun ListeningAudioWave(rmsLevel: Float) {
     val infiniteTransition = rememberInfiniteTransition(label = "audio_wave")
-    val animatedHeight1 by infiniteTransition.animateFloat(
+    val clampedRms = rmsLevel.coerceIn(0f, 1f)
+
+    val h1 by infiniteTransition.animateFloat(
         initialValue = 4f,
-        targetValue = (rmsLevel.coerceIn(0f, 10f) * 1.5f).coerceAtLeast(6f),
-        animationSpec = infiniteRepeatable(tween(220), RepeatMode.Reverse),
-        label = "bar1"
+        targetValue = (5f + clampedRms * 12f).coerceIn(4f, 18f),
+        animationSpec = infiniteRepeatable(tween(160), RepeatMode.Reverse),
+        label = "w1"
     )
-    val animatedHeight2 by infiniteTransition.animateFloat(
+    val h2 by infiniteTransition.animateFloat(
         initialValue = 6f,
-        targetValue = (rmsLevel.coerceIn(0f, 10f) * 2.2f).coerceAtLeast(10f),
-        animationSpec = infiniteRepeatable(tween(280), RepeatMode.Reverse),
-        label = "bar2"
+        targetValue = (8f + clampedRms * 16f).coerceIn(5f, 20f),
+        animationSpec = infiniteRepeatable(tween(210), RepeatMode.Reverse),
+        label = "w2"
+    )
+    val h3 by infiniteTransition.animateFloat(
+        initialValue = 5f,
+        targetValue = (7f + clampedRms * 14f).coerceIn(4f, 18f),
+        animationSpec = infiniteRepeatable(tween(180), RepeatMode.Reverse),
+        label = "w3"
+    )
+    val h4 by infiniteTransition.animateFloat(
+        initialValue = 7f,
+        targetValue = (10f + clampedRms * 18f).coerceIn(6f, 22f),
+        animationSpec = infiniteRepeatable(tween(230), RepeatMode.Reverse),
+        label = "w4"
+    )
+    val h5 by infiniteTransition.animateFloat(
+        initialValue = 4f,
+        targetValue = (6f + clampedRms * 13f).coerceIn(4f, 17f),
+        animationSpec = infiniteRepeatable(tween(190), RepeatMode.Reverse),
+        label = "w5"
     )
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(2.dp),
-        modifier = Modifier.height(14.dp)
+        modifier = Modifier.height(18.dp)
     ) {
-        Box(
-            modifier = Modifier
-                .width(2.5.dp)
-                .height(animatedHeight1.dp)
-                .background(CyanListening, RoundedCornerShape(1.dp))
-        )
-        Box(
-            modifier = Modifier
-                .width(2.5.dp)
-                .height(animatedHeight2.dp)
-                .background(CyanListening, RoundedCornerShape(1.dp))
-        )
-        Box(
-            modifier = Modifier
-                .width(2.5.dp)
-                .height(animatedHeight1.dp)
-                .background(CyanListening, RoundedCornerShape(1.dp))
-        )
+        listOf(h1, h2, h4, h3, h5).forEach { barH ->
+            Box(
+                modifier = Modifier
+                    .width(2.5.dp)
+                    .height(barH.dp)
+                    .background(
+                        Brush.verticalGradient(listOf(CyanListening, GoldAccent)),
+                        RoundedCornerShape(1.dp)
+                    )
+            )
+        }
     }
 }
 
@@ -899,21 +1054,21 @@ private fun SpeakingEqualizerBars() {
     val infiniteTransition = rememberInfiniteTransition(label = "speaking_bars")
     val barHeight1 by infiniteTransition.animateFloat(
         initialValue = 3f,
-        targetValue = 12f,
-        animationSpec = infiniteRepeatable(tween(240, easing = LinearEasing), RepeatMode.Reverse),
+        targetValue = 14f,
+        animationSpec = infiniteRepeatable(tween(220, easing = LinearEasing), RepeatMode.Reverse),
         label = "s_bar1"
     )
     val barHeight2 by infiniteTransition.animateFloat(
-        initialValue = 12f,
+        initialValue = 14f,
         targetValue = 4f,
-        animationSpec = infiniteRepeatable(tween(280, easing = LinearEasing), RepeatMode.Reverse),
+        animationSpec = infiniteRepeatable(tween(260, easing = LinearEasing), RepeatMode.Reverse),
         label = "s_bar2"
     )
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(2.dp),
-        modifier = Modifier.height(14.dp)
+        modifier = Modifier.height(16.dp)
     ) {
         Box(
             modifier = Modifier

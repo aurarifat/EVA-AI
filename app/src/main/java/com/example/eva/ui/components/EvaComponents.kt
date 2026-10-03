@@ -3,6 +3,7 @@ package com.example.eva.ui.components
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,10 +22,13 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.R
 import com.example.eva.voice.VoiceState
 import com.example.ui.theme.*
 
@@ -118,10 +122,10 @@ fun EvaNexusOrb(
             )
         }
 
-        // Inner glowing orb button
+        // Inner glowing orb button with special EVA Logo
         Box(
             modifier = Modifier
-                .size(110.dp)
+                .size(116.dp)
                 .clip(CircleShape)
                 .background(
                     Brush.radialGradient(
@@ -133,24 +137,45 @@ fun EvaNexusOrb(
                     )
                 )
                 .border(
-                    BorderStroke(2.dp, Brush.linearGradient(listOf(glowColor, glowColor.copy(alpha = 0.3f)))),
+                    BorderStroke(2.5.dp, Brush.linearGradient(listOf(glowColor, glowColor.copy(alpha = 0.4f)))),
                     CircleShape
                 ),
             contentAlignment = Alignment.Center
         ) {
-            Icon(
-                imageVector = when (voiceState) {
-                    VoiceState.LISTENING -> Icons.Default.Mic
-                    VoiceState.SPEAKING -> Icons.Default.VolumeUp
-                    VoiceState.THINKING, VoiceState.EXECUTING -> Icons.Default.AutoAwesome
-                    VoiceState.SLEEPING -> Icons.Default.Bedtime
-                    VoiceState.ERROR -> Icons.Default.Warning
-                    VoiceState.IDLE -> Icons.Default.GraphicEq
-                },
-                contentDescription = "EVA Voice Status",
-                tint = glowColor,
-                modifier = Modifier.size(42.dp)
+            Image(
+                painter = painterResource(id = R.drawable.eva_gold_logo_1790337115749),
+                contentDescription = "EVA Special Logo",
+                modifier = Modifier
+                    .size(92.dp)
+                    .clip(CircleShape),
+                contentScale = ContentScale.Crop
             )
+
+            // Status Indicator Badge in bottom-right of orb
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(4.dp)
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .background(EvaObsidian)
+                    .border(1.5.dp, glowColor, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = when (voiceState) {
+                        VoiceState.LISTENING -> Icons.Default.Mic
+                        VoiceState.SPEAKING -> Icons.Default.VolumeUp
+                        VoiceState.THINKING, VoiceState.EXECUTING -> Icons.Default.AutoAwesome
+                        VoiceState.SLEEPING -> Icons.Default.Bedtime
+                        VoiceState.ERROR -> Icons.Default.Warning
+                        VoiceState.IDLE -> Icons.Default.GraphicEq
+                    },
+                    contentDescription = "EVA Voice Status",
+                    tint = glowColor,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
         }
     }
 }

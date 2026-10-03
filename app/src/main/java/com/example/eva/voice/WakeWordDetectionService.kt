@@ -26,8 +26,11 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 /**
- * Dedicated Android Foreground Service that runs the lightweight local wake-word detection model.
- * Enables hands-free interaction for EVA anywhere on the device without requiring open UI.
+ * Dedicated Android Foreground Service that runs the lightweight local wake-word detection engine
+ * when EVA's floating overlay is not active.
+ *
+ * Coordinates seamlessly with [EvaOverlayService] and [MainActivity] so that only ONE audio capture
+ * session is ever active on the device at any time.
  */
 class WakeWordDetectionService : Service() {
 
@@ -43,6 +46,12 @@ class WakeWordDetectionService : Service() {
         @Volatile
         var isRunning: Boolean = false
             private set
+
+        /**
+         * Optional listener registered by MainActivity or EvaViewModel when active in foreground.
+         */
+        @Volatile
+        var onForegroundWakeTriggered: (() -> Unit)? = null
 
         fun startService(context: Context) {
             val intent = Intent(context, WakeWordDetectionService::class.java).apply {
@@ -75,6 +84,8 @@ class WakeWordDetectionService : Service() {
     private lateinit var preferences: EvaPreferences
     private var localDetector: LocalWakeWordDetector? = null
     private var tts: EvaTextToSpeech? = null
+    private var isChimeEnabled = true
+    private var isHandsFreeSpeechEnabled = true
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -93,6 +104,10 @@ class WakeWordDetectionService : Service() {
         serviceScope.launch {
             preferences.settingsFlow.collectLatest { settings ->
                 tts?.configure(settings.voiceSpeed, settings.voicePitch, settings.voiceLanguage)
+                isChimeEnabled = settings.wakeWordChimeEnabled
+                isHandsFreeSpeechEnabled = settings.wakeWordHandsFreeSpeech
+                localDetector?.updateSensitivity(settings.wakeWordSensitivity)
+
                 if (!settings.wakeWordEnabled) {
                     Log.i(TAG, "Wake word disabled in settings, stopping WakeWordDetectionService")
                     stopSelf()
@@ -108,8 +123,14 @@ class WakeWordDetectionService : Service() {
                 return START_NOT_STICKY
             }
             else -> {
-                startForegroundServiceNotification()
-                localDetector?.start()
+                // If EvaOverlayService is already active, yield to it
+                if (EvaOverlayService.activeInstance != null) {
+                    Log.d(TAG, "EvaOverlayService active; WakeWordDetectionService yielding microphone")
+                    localDetector?.pause()
+                } else {
+                    startForegroundServiceNotification()
+                    localDetector?.start()
+                }
             }
         }
         return START_STICKY
@@ -126,49 +147,59 @@ class WakeWordDetectionService : Service() {
         ).apply {
             start()
         }
-        Log.i(TAG, "Local lightweight wake word detection model initialized and running")
+        Log.i(TAG, "Local lightweight wake word detection engine initialized for 'Hey EVA'")
     }
 
     private fun handleWakeWordDetected(keyword: String, confidence: Float) {
-        Log.i(TAG, ">>> Local Wake Word '$keyword' detected (conf: $confidence)! Triggering hands-free listening <<<")
+        Log.i(TAG, ">>> Local Wake Word '$keyword' detected (conf: $confidence)! Triggering response <<<")
 
         // 1. Sensory feedback
         WakeWordFeedback.triggerHaptic(applicationContext)
-        WakeWordFeedback.playChime(applicationContext)
+        if (isChimeEnabled) {
+            WakeWordFeedback.playChime(applicationContext)
+        }
 
-        // 2. Pause detector while processing/listening
-        localDetector?.pause()
+        // 2. Mute local detector to prevent acoustic feedback loop
+        localDetector?.mute(3500L)
 
         // 3. Delegate to active overlay if running
         val overlay = EvaOverlayService.activeInstance
         if (overlay != null) {
             Log.d(TAG, "Delegating wake-word activation to active EvaOverlayService")
-            // The overlay will handle speech response & voice listening
-            serviceScope.launch {
-                localDetector?.resume()
-            }
+            overlay.triggerWakeWordFromExternal()
             return
         }
 
-        // 4. Standalone hands-free trigger: Speak prompt & launch hands-free interaction
-        val readyPhrase = VoicePersonality.getWakeWordReadyPhrase()
-        tts?.speak(readyPhrase) {
-            serviceScope.launch(Dispatchers.Main) {
-                // Open MainActivity with EXTRA_TRIGGERED_FROM_WAKE to immediately open voice listening
-                val openIntent = Intent(applicationContext, MainActivity::class.java).apply {
-                    putExtra(EXTRA_TRIGGERED_FROM_WAKE, true)
-                    putExtra(MainActivity.EXTRA_MANUAL_OPEN, true)
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                }
-                try {
-                    startActivity(openIntent)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to launch MainActivity from wake-word: ${e.message}")
-                }
+        // 4. Delegate to foreground activity / ViewModel if app is currently open
+        val foregroundCallback = onForegroundWakeTriggered
+        if (foregroundCallback != null) {
+            Log.d(TAG, "Delegating wake-word activation to foreground MainActivity")
+            foregroundCallback.invoke()
+            return
+        }
 
-                // Resume detection after a short cooldown
-                kotlinx.coroutines.delay(4000L)
-                localDetector?.resume()
+        // 5. Standalone hands-free trigger: Speak prompt & launch hands-free interaction
+        if (isHandsFreeSpeechEnabled) {
+            val readyPhrase = VoicePersonality.getWakeWordReadyPhrase()
+            tts?.speak(readyPhrase) {
+                launchMainActivityFromWake()
+            }
+        } else {
+            launchMainActivityFromWake()
+        }
+    }
+
+    private fun launchMainActivityFromWake() {
+        serviceScope.launch(Dispatchers.Main) {
+            val openIntent = Intent(applicationContext, MainActivity::class.java).apply {
+                putExtra(EXTRA_TRIGGERED_FROM_WAKE, true)
+                putExtra(MainActivity.EXTRA_MANUAL_OPEN, true)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
+            try {
+                startActivity(openIntent)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to launch MainActivity from wake-word: ${e.message}")
             }
         }
     }
@@ -180,7 +211,7 @@ class WakeWordDetectionService : Service() {
                 "EVA Wake Word Detection",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Keeps EVA's lightweight local wake-word detector active for hands-free 'Hi EVA' commands"
+                description = "Keeps EVA's lightweight local wake-word detector active for hands-free 'Hey EVA' commands"
                 setShowBadge(false)
             }
             val nm = getSystemService(NotificationManager::class.java)
@@ -212,7 +243,7 @@ class WakeWordDetectionService : Service() {
 
         val notification: Notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setContentTitle("EVA Hands-Free Wake Word Active")
-            .setContentText("Local lightweight acoustic model listening for 'Hi EVA'")
+            .setContentText("Local acoustic model listening for 'Hey EVA' • 100% Offline")
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentIntent(pendingIntent)
             .addAction(R.drawable.ic_launcher_foreground, "Open EVA", pendingIntent)

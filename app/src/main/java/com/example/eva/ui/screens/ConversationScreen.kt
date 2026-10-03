@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -23,10 +24,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.R
 import com.example.eva.data.database.ConversationEntity
 import com.example.eva.ui.EvaViewModel
 import com.example.eva.voice.VoiceState
@@ -64,13 +68,16 @@ fun ConversationScreen(
             TopAppBar(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
+                        Image(
+                            painter = painterResource(id = R.drawable.eva_gold_logo_1790337115749),
+                            contentDescription = "EVA Special Logo",
                             modifier = Modifier
-                                .size(10.dp)
+                                .size(34.dp)
                                 .clip(CircleShape)
-                                .background(if (isSpeaking) EvaYellowPrimary else EvaSuccessGreen)
+                                .border(1.5.dp, EvaYellowPrimary, CircleShape),
+                            contentScale = ContentScale.Crop
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text(
                                 text = "EVA Assistant",
@@ -363,78 +370,98 @@ fun ConversationBubble(
         return
     }
 
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
+        verticalAlignment = Alignment.Bottom
     ) {
-        // Tool execution indicator if message had a tool
-        if (!message.toolName.isNullOrBlank()) {
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = EvaSurfaceElevated,
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x33FFD54F)),
-                modifier = Modifier.padding(bottom = 4.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = if (message.toolStatus == "success") Icons.Default.CheckCircle else Icons.Default.Build,
-                        contentDescription = null,
-                        tint = if (message.toolStatus == "success") EvaSuccessGreen else EvaYellowPrimary,
-                        modifier = Modifier.size(13.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "${message.toolName} ${if (message.toolStatus == "success") "executed" else "invoked"}",
-                        color = EvaTextSecondary,
-                        fontSize = 11.sp
-                    )
-                }
-            }
+        if (!isUser) {
+            Image(
+                painter = painterResource(id = R.drawable.eva_gold_logo_1790337115749),
+                contentDescription = "EVA Avatar",
+                modifier = Modifier
+                    .padding(end = 8.dp, bottom = 2.dp)
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .border(1.dp, EvaYellowPrimary, CircleShape),
+                contentScale = ContentScale.Crop
+            )
         }
 
-        // Message bubble
-        Surface(
-            shape = RoundedCornerShape(
-                topStart = 16.dp,
-                topEnd = 16.dp,
-                bottomStart = if (isUser) 16.dp else 4.dp,
-                bottomEnd = if (isUser) 4.dp else 16.dp
-            ),
-            color = if (isUser) EvaYellowPrimary else EvaSurfaceElevated,
-            border = if (isUser) null else androidx.compose.foundation.BorderStroke(1.dp, Color(0x22FFFFFF)),
-            modifier = Modifier.widthIn(max = 300.dp)
+        Column(
+            horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
         ) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                Text(
-                    text = message.content,
-                    color = if (isUser) Color(0xFF090A0E) else EvaTextPrimary,
-                    fontSize = 14.sp,
-                    lineHeight = 20.sp
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
+            // Tool execution indicator if message had a tool
+            if (!message.toolName.isNullOrBlank()) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = EvaSurfaceElevated,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x33FFD54F)),
+                    modifier = Modifier.padding(bottom = 4.dp)
                 ) {
-                    Text(
-                        text = timeStr,
-                        color = if (isUser) Color(0x99090A0E) else EvaTextTertiary,
-                        fontSize = 10.sp
-                    )
-                    if (!isUser) {
-                        Spacer(modifier = Modifier.width(8.dp))
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Icon(
-                            imageVector = Icons.Default.ContentCopy,
-                            contentDescription = "Copy",
-                            tint = EvaTextTertiary,
-                            modifier = Modifier
-                                .size(13.dp)
-                                .clickable(onClick = onCopy)
+                            imageVector = if (message.toolStatus == "success") Icons.Default.CheckCircle else Icons.Default.Build,
+                            contentDescription = null,
+                            tint = if (message.toolStatus == "success") EvaSuccessGreen else EvaYellowPrimary,
+                            modifier = Modifier.size(13.dp)
                         )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "${message.toolName} ${if (message.toolStatus == "success") "executed" else "invoked"}",
+                            color = EvaTextSecondary,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+            }
+
+            // Message bubble
+            Surface(
+                shape = RoundedCornerShape(
+                    topStart = 16.dp,
+                    topEnd = 16.dp,
+                    bottomStart = if (isUser) 16.dp else 4.dp,
+                    bottomEnd = if (isUser) 4.dp else 16.dp
+                ),
+                color = if (isUser) EvaYellowPrimary else EvaSurfaceElevated,
+                border = if (isUser) null else androidx.compose.foundation.BorderStroke(1.dp, Color(0x22FFFFFF)),
+                modifier = Modifier.widthIn(max = 290.dp)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        text = message.content,
+                        color = if (isUser) Color(0xFF090A0E) else EvaTextPrimary,
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = timeStr,
+                            color = if (isUser) Color(0x99090A0E) else EvaTextTertiary,
+                            fontSize = 10.sp
+                        )
+                        if (!isUser) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Icon(
+                                imageVector = Icons.Default.ContentCopy,
+                                contentDescription = "Copy",
+                                tint = EvaTextTertiary,
+                                modifier = Modifier
+                                    .size(13.dp)
+                                    .clickable(onClick = onCopy)
+                            )
+                        }
                     }
                 }
             }

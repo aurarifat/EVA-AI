@@ -1,26 +1,28 @@
 package com.example.eva.voice
 
 import android.content.Context
-import android.content.Intent
+import android.media.AudioAttributes
+import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.AudioTrack
 import android.media.ToneGenerator
 import android.os.Build
-import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
-import android.speech.RecognitionListener
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
 import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlin.math.cos
+import kotlin.math.exp
+import kotlin.math.sin
 
 /**
  * Haptic and auditory feedback utilities for wake word triggers.
+ * Provides a gentle, soft, elegant synthesized harmonic wake chime instead of harsh beeps.
  */
 object WakeWordFeedback {
     private const val TAG = "WakeWordFeedback"
@@ -30,16 +32,16 @@ object WakeWordFeedback {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
                 vm?.defaultVibrator?.vibrate(
-                    VibrationEffect.createOneShot(75, VibrationEffect.DEFAULT_AMPLITUDE)
+                    VibrationEffect.createOneShot(45, VibrationEffect.DEFAULT_AMPLITUDE)
                 )
             } else {
                 @Suppress("DEPRECATION")
                 val vib = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    vib?.vibrate(VibrationEffect.createOneShot(75, VibrationEffect.DEFAULT_AMPLITUDE))
+                    vib?.vibrate(VibrationEffect.createOneShot(45, VibrationEffect.DEFAULT_AMPLITUDE))
                 } else {
                     @Suppress("DEPRECATION")
-                    vib?.vibrate(75)
+                    vib?.vibrate(45)
                 }
             }
         } catch (e: Exception) {
@@ -47,37 +49,127 @@ object WakeWordFeedback {
         }
     }
 
+    /**
+     * Plays a pleasant, gentle ascending two-tone wake chime (D5: 587Hz -> A5: 880Hz)
+     * rendered smoothly into PCM with exponential decay. Soft, modern, and pleasant.
+     */
     fun playChime(context: Context) {
-        try {
-            val toneGen = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 80)
-            toneGen.startTone(ToneGenerator.TONE_PROP_BEEP, 120)
-            Handler(Looper.getMainLooper()).postDelayed({
+        Thread {
+            try {
+                val sampleRate = 22050
+                val durationMs = 230
+                val numSamples = (sampleRate * durationMs) / 1000
+                val buffer = ShortArray(numSamples)
+
+                val f1 = 587.33 // D5
+                val f2 = 880.00 // A5
+                val overlapStart = (sampleRate * 0.065).toInt()
+
+                for (i in 0 until numSamples) {
+                    val t = i.toDouble() / sampleRate
+                    var sampleVal = 0.0
+
+                    // First note (D5) with cosine attack and quick decay
+                    if (i < overlapStart + (sampleRate * 0.045)) {
+                        val env1 = if (t < 0.012) {
+                            (1.0 - cos(Math.PI * t / 0.012)) / 2.0
+                        } else {
+                            exp(-38.0 * (t - 0.012))
+                        }
+                        val wave1 = sin(2.0 * Math.PI * f1 * t) +
+                                0.12 * sin(4.0 * Math.PI * f1 * t)
+                        sampleVal += wave1 * env1
+                    }
+
+                    // Second note (A5) with sweet bell-like decay
+                    if (i >= overlapStart) {
+                        val t2 = (i - overlapStart).toDouble() / sampleRate
+                        val env2 = if (t2 < 0.015) {
+                            (1.0 - cos(Math.PI * t2 / 0.015)) / 2.0
+                        } else {
+                            exp(-18.0 * (t2 - 0.015))
+                        }
+                        val wave2 = sin(2.0 * Math.PI * f2 * t2) +
+                                0.10 * sin(4.0 * Math.PI * f2 * t2)
+                        sampleVal += wave2 * env2
+                    }
+
+                    // Scale to comfortable ~26% volume (no harsh clipping or loud beeps)
+                    val pcm = (sampleVal * 8500.0).toInt().coerceIn(-32767, 32767).toShort()
+                    buffer[i] = pcm
+                }
+
+                val audioTrack = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    AudioTrack.Builder()
+                        .setAudioAttributes(
+                            AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                                .build()
+                        )
+                        .setAudioFormat(
+                            AudioFormat.Builder()
+                                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                                .setSampleRate(sampleRate)
+                                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                                .build()
+                        )
+                        .setBufferSizeInBytes(buffer.size * 2)
+                        .setTransferMode(AudioTrack.MODE_STATIC)
+                        .build()
+                } else {
+                    @Suppress("DEPRECATION")
+                    AudioTrack(
+                        AudioManager.STREAM_MUSIC,
+                        sampleRate,
+                        AudioFormat.CHANNEL_OUT_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT,
+                        buffer.size * 2,
+                        AudioTrack.MODE_STATIC
+                    )
+                }
+
+                audioTrack.write(buffer, 0, buffer.size)
+                audioTrack.play()
+                Thread.sleep(durationMs.toLong() + 40L)
                 try {
-                    toneGen.release()
+                    audioTrack.stop()
+                    audioTrack.release()
                 } catch (_: Exception) {}
-            }, 300)
-        } catch (e: Exception) {
-            Log.w(TAG, "Auditory chime failed: ${e.message}")
+            } catch (e: Exception) {
+                Log.w(TAG, "AudioTrack chime failed, falling back: ${e.message}")
+                try {
+                    val fallback = ToneGenerator(AudioManager.STREAM_MUSIC, 25)
+                    fallback.startTone(ToneGenerator.TONE_PROP_PROMPT, 60)
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        try { fallback.release() } catch (_: Exception) {}
+                    }, 180)
+                } catch (_: Exception) {}
+            }
+        }.apply {
+            name = "EvaChimeThread"
+            isDaemon = true
+            start()
         }
     }
 }
 
 /**
- * Lightweight, privacy-preserving continuous wake word listener for "Hi EVA".
- * Runs short-cycle speech recognition loops without buffering or storing audio.
- * Automatically pauses during active phone calls or when the mic is busy.
+ * Lightweight, privacy-preserving continuous wake word listener for "Hey EVA" and "Hi EVA".
+ * Powered 100% by the local on-device [LocalWakeWordDetector] and [LocalWakeWordModel].
+ *
+ * NOTE: Never uses Android's SpeechRecognizer in a background loop, which eliminates OS beeps,
+ * audio focus conflicts, and false trigger loops.
  */
 class WakeWordListener(
     private val context: Context,
     private val onWakeWordDetected: () -> Unit
 ) {
-
     companion object {
         private const val TAG = "WakeWordListener"
 
         /**
-         * Fuzzy matches common variations and mis-transcriptions of "Hi EVA".
-         * Case-insensitive, strips punctuation, and handles near-matches like "hey eva", "hi eeva", etc.
+         * Fallback text matcher used if needed by text/transcript inputs.
          */
         fun matchesWakeWord(rawTranscript: String): Boolean {
             val clean = rawTranscript.lowercase()
@@ -87,14 +179,10 @@ class WakeWordListener(
 
             if (clean.isBlank()) return false
 
-            // Standard variations and common mis-transcriptions
             val phraseTargets = listOf(
-                "hi eva", "hey eva", "hello eva", "ok eva", "okay eva",
-                "hi eeva", "hey eeva", "hello eeva", "ok eeva", "okay eeva",
-                "hi ava", "hey ava", "hi iva", "hey iva",
-                "hi ever", "hey ever", "hi eve", "hey eve",
-                "high eva", "high eeva", "hi eva ai", "hey eva ai",
-                "hi either", "hi ether", "hi ai eva"
+                "hey eva", "hi eva", "hello eva", "ok eva", "okay eva",
+                "hey eeva", "hi eeva", "hello eeva", "ok eeva",
+                "hey ava", "hi ava", "hey ever", "hi ever"
             )
 
             for (target in phraseTargets) {
@@ -103,23 +191,15 @@ class WakeWordListener(
                 }
             }
 
-            // Standalone wake word when spoken clearly
-            val tokens = clean.split(" ")
-            if (tokens.size == 1 && (tokens[0] == "eva" || tokens[0] == "eeva")) {
-                return true
-            }
-
-            // Flexible regex: (hi|hey|hello|ok|okay|high|yo) followed immediately by eva/eeva/ava
-            val regex = Regex("""\b(hi|hey|hello|ok|okay|high|yo)\s+(eva|eeva|ava|ever|iva)\b""", RegexOption.IGNORE_CASE)
+            val regex = Regex("""\b(hey|hi|hello|ok|okay)\s+(eva|eeva|ava|ever)\b""", RegexOption.IGNORE_CASE)
             return regex.containsMatchIn(clean)
         }
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-
-    private var speechRecognizer: SpeechRecognizer? = null
     private var localDetector: LocalWakeWordDetector? = null
+    private var currentSensitivity = 0.6f
+
     private var isRunning = false
     private var isPaused = false
 
@@ -127,17 +207,26 @@ class WakeWordListener(
     val isListening: StateFlow<Boolean> = _isListening.asStateFlow()
 
     fun updateSensitivity(sensitivity: Float) {
+        this.currentSensitivity = sensitivity
         localDetector?.updateSensitivity(sensitivity)
+    }
+
+    fun mute(durationMs: Long = 3000L) {
+        localDetector?.mute(durationMs)
+    }
+
+    fun unmute() {
+        localDetector?.unmute()
     }
 
     fun startListening() {
         mainHandler.post {
             if (isRunning) return@post
-            Log.d(TAG, "Starting wake word listening loop with local acoustic model for 'Hi EVA'")
+            Log.d(TAG, "Starting wake word listening loop with local acoustic model for 'Hey EVA'")
             isRunning = true
             isPaused = false
             startLocalDetector()
-            startRecognitionCycle()
+            _isListening.value = true
         }
     }
 
@@ -148,7 +237,6 @@ class WakeWordListener(
             isPaused = false
             localDetector?.stop()
             localDetector = null
-            cleanupRecognizer()
             _isListening.value = false
         }
     }
@@ -159,7 +247,6 @@ class WakeWordListener(
             Log.d(TAG, "Pausing wake word listening loop")
             isPaused = true
             localDetector?.pause()
-            cleanupRecognizer()
             _isListening.value = false
         }
     }
@@ -170,7 +257,7 @@ class WakeWordListener(
             Log.d(TAG, "Resuming wake word listening loop")
             isPaused = false
             localDetector?.resume()
-            startRecognitionCycle()
+            _isListening.value = true
         }
     }
 
@@ -180,7 +267,6 @@ class WakeWordListener(
             isPaused = false
             localDetector?.destroy()
             localDetector = null
-            cleanupRecognizer()
             _isListening.value = false
         }
     }
@@ -190,13 +276,11 @@ class WakeWordListener(
             if (localDetector == null) {
                 localDetector = LocalWakeWordDetector(
                     context = context,
-                    sensitivity = 0.6f,
+                    sensitivity = currentSensitivity,
                     onWakeWordDetected = { keyword, confidence ->
                         Log.i(TAG, "Local acoustic model detected wake word: $keyword (conf: $confidence)")
                         mainHandler.post {
                             if (isRunning && !isPaused) {
-                                cleanupRecognizer()
-                                _isListening.value = false
                                 onWakeWordDetected()
                             }
                         }
@@ -207,161 +291,5 @@ class WakeWordListener(
         } catch (e: Exception) {
             Log.w(TAG, "Could not start local wake word detector: ${e.message}")
         }
-    }
-
-    /**
-     * Checks if a phone call is active or audio mode is in communication.
-     */
-    private fun isPhoneCallOrMicInUse(): Boolean {
-        val mode = audioManager?.mode ?: AudioManager.MODE_NORMAL
-        return mode == AudioManager.MODE_IN_CALL ||
-                mode == AudioManager.MODE_IN_COMMUNICATION ||
-                mode == AudioManager.MODE_RINGTONE
-    }
-
-    private fun startRecognitionCycle() {
-        if (!isRunning || isPaused) return
-
-        // Privacy & battery guard: pause if in phone call
-        if (isPhoneCallOrMicInUse()) {
-            Log.d(TAG, "Microphone is in call/communication mode. Deferring wake word cycle.")
-            mainHandler.postDelayed({ startRecognitionCycle() }, 2500L)
-            return
-        }
-
-        try {
-            cleanupRecognizer()
-
-            if (!SpeechRecognizer.isRecognitionAvailable(context)) {
-                Log.w(TAG, "SpeechRecognizer not available on this device")
-                _isListening.value = false
-                return
-            }
-
-            val recognizer = createRecognizerInstance() ?: run {
-                Log.w(TAG, "Failed to instantiate SpeechRecognizer")
-                _isListening.value = false
-                return
-            }
-            speechRecognizer = recognizer
-
-            recognizer.setRecognitionListener(object : RecognitionListener {
-                override fun onReadyForSpeech(params: Bundle?) {
-                    _isListening.value = true
-                }
-
-                override fun onBeginningOfSpeech() {
-                    _isListening.value = true
-                }
-
-                override fun onRmsChanged(rmsdB: Float) {}
-
-                override fun onBufferReceived(buffer: ByteArray?) {
-                    // Privacy requirement: audio buffer is never stored or recorded
-                }
-
-                override fun onEndOfSpeech() {
-                    _isListening.value = false
-                }
-
-                override fun onError(error: Int) {
-                    _isListening.value = false
-                    cleanupRecognizer()
-
-                    if (!isRunning || isPaused) return
-
-                    // Backoff delay depending on error type
-                    val retryDelay = when (error) {
-                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY,
-                        SpeechRecognizer.ERROR_AUDIO -> 1800L
-                        SpeechRecognizer.ERROR_NETWORK,
-                        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> 2500L
-                        else -> 350L
-                    }
-
-                    mainHandler.postDelayed({ startRecognitionCycle() }, retryDelay)
-                }
-
-                override fun onResults(results: Bundle?) {
-                    _isListening.value = false
-                    val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    val matchedText = matches?.firstOrNull { matchesWakeWord(it) }
-
-                    cleanupRecognizer()
-
-                    if (matchedText != null) {
-                        Log.d(TAG, "Wake word matched in results: '$matchedText'")
-                        onWakeWordDetected()
-                    } else if (isRunning && !isPaused) {
-                        // Quick turnaround to next short listening cycle
-                        mainHandler.postDelayed({ startRecognitionCycle() }, 200L)
-                    }
-                }
-
-                override fun onPartialResults(partialResults: Bundle?) {
-                    val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    val matchedText = matches?.firstOrNull { matchesWakeWord(it) }
-
-                    if (matchedText != null) {
-                        Log.d(TAG, "Wake word matched in partial results: '$matchedText'")
-                        cleanupRecognizer()
-                        _isListening.value = false
-                        onWakeWordDetected()
-                    }
-                }
-
-                override fun onEvent(eventType: Int, params: Bundle?) {}
-            })
-
-            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
-                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-                putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
-                // Short detection cycle for responsiveness and battery conservation
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1500L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1000L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1000L)
-            }
-
-            recognizer.startListening(intent)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error starting wake word cycle: ${e.message}", e)
-            _isListening.value = false
-            cleanupRecognizer()
-            if (isRunning && !isPaused) {
-                mainHandler.postDelayed({ startRecognitionCycle() }, 2000L)
-            }
-        }
-    }
-
-    private fun createRecognizerInstance(): SpeechRecognizer? {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            try {
-                if (SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) {
-                    val onDevice = SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
-                    if (onDevice != null) return onDevice
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "On-device speech recognizer init failed: ${e.message}")
-            }
-        }
-
-        return try {
-            SpeechRecognizer.createSpeechRecognizer(context)
-        } catch (e: Exception) {
-            Log.w(TAG, "SpeechRecognizer creation failed: ${e.message}")
-            null
-        }
-    }
-
-    private fun cleanupRecognizer() {
-        try {
-            speechRecognizer?.stopListening()
-            speechRecognizer?.cancel()
-            speechRecognizer?.destroy()
-        } catch (_: Exception) {}
-        speechRecognizer = null
     }
 }

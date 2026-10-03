@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
@@ -88,7 +89,7 @@ fun HomeScreen(
     val quickActions = listOf(
         QuickActionItem("Toggle Home", Icons.Default.Home, "toggle to home screen"),
         QuickActionItem("Overlay", Icons.Default.PictureInPicture, "open display overlay"),
-        QuickActionItem("Flashlight", Icons.Default.FlashlightOn, "turn on flashlight"),
+        QuickActionItem("Voice Command", Icons.Default.GraphicEq, "help me with voice commands"),
         QuickActionItem("Status", Icons.Default.BatteryChargingFull, "how is my phone"),
         QuickActionItem("Voice Memo", Icons.Default.Mic, "start voice recording"),
         QuickActionItem("Music", Icons.Default.MusicNote, "play my music"),
@@ -114,7 +115,7 @@ fun HomeScreen(
             .padding(horizontal = 20.dp, vertical = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Top Header
+        // Top Header with Special EVA Logo
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -122,26 +123,38 @@ fun HomeScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
-                Text(
-                    text = greeting,
-                    color = EvaTextSecondary,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Normal
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.foundation.Image(
+                    painter = painterResource(id = R.drawable.eva_gold_logo_1790337115749),
+                    contentDescription = "EVA Special Logo",
+                    modifier = Modifier
+                        .size(46.dp)
+                        .clip(CircleShape)
+                        .border(1.5.dp, EvaYellowPrimary, CircleShape),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
                 )
-                Text(
-                    text = "EVA",
-                    color = EvaYellowPrimary,
-                    fontSize = 28.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.5.sp
-                )
-                Text(
-                    text = "Electronic Virtual Assistant",
-                    color = EvaTextTertiary,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium
-                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text(
+                        text = greeting,
+                        color = EvaTextSecondary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Normal
+                    )
+                    Text(
+                        text = "EVA",
+                        color = EvaYellowPrimary,
+                        fontSize = 26.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.5.sp
+                    )
+                    Text(
+                        text = "Electronic Virtual Assistant",
+                        color = EvaTextTertiary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
             }
 
             IconButton(
